@@ -1,6 +1,5 @@
 #gopro-sync
-Forked from MewPro
-Developped for Lentimax multiple-GoPro array for 3D photography
+Forked from MewPro, developped for Lentimax: multiple-GoPro array for 3D photography
 
 Arduino BacPac™ for GoPro Hero 3+ Black: GoPro can be controlled by Arduino Pro Mini attached on Herobus.
 
