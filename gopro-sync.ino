@@ -1,4 +1,5 @@
-/* gopro-sync - a program for synchronized shutter release on multiple GoPro Hero 3+ Black edition cameras.
+/* 
+   gopro-sync - a program for synchronized shutter release on multiple GoPro Hero 3+ Black edition cameras.
 
    Forked from orangkucing's MewPro: Control GoPro Hero 3+ Black from Arduino
    Simplified, customized and (hopefully) compatible with most micro-controllers...
@@ -16,19 +17,20 @@
 // Include other C files:
 
 // c_I2C: I2C interface (THIS PART CAN'T BE OPTED OUT)
+#include <RLduino78.h>
 #include <Wire.h> 
-#include "bacpac-commands.c"
-#include "i2c.c"
-#include "queue.c"
+#include "bacpac-commands.ino"
+#include "i2c.ino"
+#include "queue.ino"
 
 
 // e_Shutters: One or two remote shutters without contact bounce or chatter
 #undef  USE_SHUTTERS
-//#include "shutter.c"
+//#include "shutter.ino"
 
 // f_Switches: One or two mechanical switches
 #define  USE_SWITCHES
-#include "switch.c"
+#include "switch.ino"
 
 // All I/O parameters are in gopro-sync.h
 
