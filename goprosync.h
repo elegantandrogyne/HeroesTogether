@@ -6,7 +6,7 @@
 //                           0;  // (Used by serial port)
 //                           1;  // (Used by serial port)
 const int SHUTTER_PIN      = 2;  // Interrupt pin w/o software debounce
-//                           3;  // (Not in use)
+const int ONOFF_PIN        = 3;  // Software-debounced on-off button
 const int IRRECV_PIN       = 4;  // IR remote controller
 const int SWITCH0_PIN      = 5;  // Software debounced; ON-start ON-stop
 const int SWITCH1_PIN      = 6;  // Software debounced; ON-start OFF-stop
@@ -65,21 +65,4 @@ extern void ledOff();
 extern void ledOn();
 extern void setupLED();
 
-// function prototypes
-//   Arduino IDE doesn't need these prototypes but does Renesas Web Compiler
-void resetI2C(void);
-void setupShutter(void);
-void setupSwitch(void);
-void setupIRremote(void);
-void setupLightSensor(void);
-void setupPIRSensor(void);
-void resetVMD(void);
-void checkTimeAlarms(void);
-void checkBacpacCommands(void);
-void checkCameraCommands(void);
-void checkSwitch(void);
-void checkIRremote(void);
-void checkLightSensor(void);
-void checkPIRSensor(void);
-void checkVMD(void);
-// end of function prototypes
+

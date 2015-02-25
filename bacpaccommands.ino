@@ -23,18 +23,7 @@ void bacpacCommand()
     } else {
       queueIn("XS1");
     }
-#ifdef USE_TIME_ALARMS
-    if (timeStatus() != timeSet) {
-      Serial.println(F("time not set"));
-      queueIn("td"); // Synchronize time with camera.
-    } else {
-      char buf[64];
-      Serial.println(F("time already set"));
-      sprintf(buf, "%04d-%02d-%02d %02d:%02d:%02d", year(), month(), day(), hour(), minute(), second());
-      Serial.println(buf);
-      setupTimeAlarms();
-    }
-#endif
+
     break;
   case SET_BACPAC_3D_SYNC_READY:
     switch (recv[3]) {
@@ -144,11 +133,7 @@ void checkBacpacCommands()
           // 0x26   SP SET_BACPAC_PROTUNE_SHARPNESS
           // 0x27   EV SET_BACPAC_PROTUNE_EXPOSURE_VALUE
           // -----+-----------------------------------------------------
-#ifdef USE_TIME_ALARMS
-          // Hour, Min, Sec, date, month, full 4-digit year
-          setTime(recv[5], recv[6], recv[7], recv[4], recv[3], 2000 + recv[2]);
-          setupTimeAlarms();
-#endif
+
           break;
         default:
           // do nothing
