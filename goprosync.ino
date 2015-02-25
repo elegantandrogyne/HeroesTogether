@@ -568,6 +568,9 @@ void switchClosedCommand(int state)
       startRecording();
       break;
     case (1 << 2): // ONOFF_PIN
+      if isMaster() {
+        roleChange();
+      }
       powerOn();
       break;
     default:
