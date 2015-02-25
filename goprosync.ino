@@ -2,83 +2,32 @@
 //   gopro-sync - a program for synchronized shutter release on multiple GoPro Hero 3+ Black edition cameras.
 //
 //   Forked from orangkucing's MewPro: Control GoPro Hero 3+ Black from Arduino
-//   Simplified, customized and (hopefully) compatible with most micro-controllers...
+//   Simplified, customized and (hopefully) portable to most micro-controllers...
 //
-//   A piece of advice:
-//   After programming a microcontroller, connect to it via serial interface (need 3V3 UART? Raspberry Pi is excellent for that!)
-//   and issue a series of commands:
-//     @
-//     !
-//   That'll turn the camera on, set camera role to slave/master (we need slave; after issuing "!", the camera should dump parameters
-//   including battery status etc. - that means it's in slave role; the camera's shutter button should be inactive).
-//   This is very important, because during role change, a value is written to EEPROM, so you don't even have to program it yourself!
-//
-
 
 #include <Arduino.h>
 #include <Wire.h> 
+#define GOPROSYNC_BUFFER_LENGTH 64
+#define I2C_NOSTOP false
+#define I2C_STOP true
+#define BUFFER_LENGTH     GOPROSYNC_BUFFER_LENGTH
+#define TWI_BUFFER_LENGTH GOPROSYNC_BUFFER_LENGTH
+#define WIRE              Wire
 
 
-//                           0;  // (Used by serial port)
-//                           1;  // (Used by serial port)
-const int SHUTTER_PIN      = 2;  // Interrupt pin w/o software debounce
+// Definitions of pins:
+
 const int ONOFF_PIN        = 3;  // Software-debounced on-off button
-const int IRRECV_PIN       = 4;  // IR remote controller
 const int SWITCH0_PIN      = 5;  // Software debounced; ON-start ON-stop
 const int SWITCH1_PIN      = 6;  // Software debounced; ON-start OFF-stop
-//                           7;  // (Arduino: Not in use; GR-KURUMI: Used by I2C SCL)
-//                           8;  // (Arduino: Not in use; GR-KURUMI: Used by I2C SDA)
-const int PIR_PIN          = 9;  // Passive InfraRed motion sensor
-// BEGIN Don't change the following pin allocations. These are used to control Herobus. 
 const int I2CINT           = 10; // (SS)
 const int TRIG             = 11; // (MOSI)
 const int BPRDY            = 12; // (MISO) Pulled up by camera
-//                           13; // (SCK) built-in LED
 const int HBUSRDY          = A0; // (14)
 const int PWRBTN           = A1; // (15) Pulled up by camera
-// END Don't change.
-//                           A2; // (16) (Not in use)
-//                           A3; // (17) (Not in use)
-//                           A4; // (18) (Arduino: Used by I2C SDA; GR-KURUMI: Not in use)
-//                           A5; // (19) (Arduino: Used by I2C SCL; GR-KURUMI: Not in use) 
-//                           A6; // (20) Analog only (Not in use)
-const int LIGHT_SENSOR_PIN = A7; // (21) Analog only
-//
-/*    Arduino Pro Micro / Arduino Leonardo (3.3V)
 
 
-const int SHUTTER_PIN      = 0;    // Interrupt pin w/o software debounce
-//                           1;    // (Not in use)
-//                           2;    // (Used by I2C SDA)
-//                           3;    // (Used by I2C SCL)
-const int IRRECV_PIN       = 4;    // (24 | A6) IR remote controller
-const int SWITCH0_PIN      = 5;    // Software debounced; ON-start ON-stop
-const int SWITCH1_PIN      = 6;    // (25 | A7) Software
-//                           7;    // (Not in use)
-const int LIGHT_SENSOR_PIN = 8;    // (26 | A8)
-const int PIR_PIN          = 9;    // (27 | A9) Passive InfraRed motion sensor
-// BEGIN Don't change the following pin allocations. These are used to control Herobus. 
-const int I2CINT           = 10;   // (28 | A10)
-//                           11;   //              (Arduino Pro Micro: No pin)
-//                           12;   // (29 | A11)   (Arduino Pro Micro: No pin)
-//                           13;   // built-in LED (Arduino Pro Micro: No pin, No LED)
-const int TRIG             = MOSI; // (16)
-const int BPRDY            = MISO; // (14) Pulled up by camera
-//                           SCK;  // (15) (Not in use)
-//                           SS;   // (17) RXLED   (Arduino Pro Micro: No pin)
-const int HBUSRDY          = A0;   // (18)
-const int PWRBTN           = A1;   // (19) Pulled up by camera
-// END Don't change.
-//                           A2;   // (20) (Not in use)
-//                           A3;   // (21) (Not in use)
-//                           A4;   // (22)         (Arduino Pro Micro: No pin)
-//                           A5;   // (23)         (Arduino Pro Micro: No pin)
-*/
-
-
-#define MEWPRO_BUFFER_LENGTH 64
-
-byte queue[MEWPRO_BUFFER_LENGTH];
+byte queue[GOPROSYNC_BUFFER_LENGTH];
 volatile int queueb = 0, queuee = 0;
 
 void emptyQueue()
@@ -98,7 +47,7 @@ byte myRead()
 {
   if (queueb != queuee) {
     byte c = queue[queueb];
-    queueb = (queueb + 1) % MEWPRO_BUFFER_LENGTH;
+    queueb = (queueb + 1) % GOPROSYNC_BUFFER_LENGTH;
     return c;
   }
   return Serial.read();
@@ -109,17 +58,11 @@ void queueIn(const char *p)
 {
   int i;
   for (i = 0; p[i] != 0; i++) {
-    queue[(queuee + i) % MEWPRO_BUFFER_LENGTH] = p[i];
+    queue[(queuee + i) % GOPROSYNC_BUFFER_LENGTH] = p[i];
   }
-  queue[(queuee + i) % MEWPRO_BUFFER_LENGTH] = '\n';
-  queuee = (queuee + i + 1) % MEWPRO_BUFFER_LENGTH;
+  queue[(queuee + i) % GOPROSYNC_BUFFER_LENGTH] = '\n';
+  queuee = (queuee + i + 1) % GOPROSYNC_BUFFER_LENGTH;
 }
-
-#define I2C_NOSTOP false
-#define I2C_STOP true
-#define BUFFER_LENGTH     MEWPRO_BUFFER_LENGTH
-#define TWI_BUFFER_LENGTH MEWPRO_BUFFER_LENGTH
-#define WIRE              Wire
 
 
 // GoPro Dual Hero EEPROM IDs
@@ -143,16 +86,12 @@ const int WRITECYCLETIME = 5000;
 const int PAGESIZE = 8; // 24XX01, 24XX02
 // const int PAGESIZE = 16; // 24XX04, 24XX08, 24XX16
 
-byte buf[MEWPRO_BUFFER_LENGTH], recv[MEWPRO_BUFFER_LENGTH];
+byte buf[GOPROSYNC_BUFFER_LENGTH], recv[GOPROSYNC_BUFFER_LENGTH];
 int bufp = 1;
 volatile boolean recvq = false;
 
-// interrupt
-#if defined(__MK20DX256__) || defined(__MK20DX128__)
-void receiveHandler(size_t numBytes)
-#else
-void receiveHandler(int numBytes)
-#endif
+void receiveHandler(int numBytes)     // depends on platform
+
 {
   int i = 0;
   while (WIRE.available()) {
@@ -173,7 +112,8 @@ void requestHandler()
   WIRE.write(buf, (int) buf[0] + 1);
 }
 
-// print out debug information to Arduino serial console
+
+// print out debug information to Arduino serial console  - deprecated
 void __printBuf(byte *p)
 {
   int len = p[0] & 0x7f;
@@ -249,6 +189,9 @@ void stopRecording()
   queueIn("SY0");
 }
 
+// When off, set this to 0
+boolean poweredOn = false;
+
 // Camera power On
 void powerOn()
 {
@@ -256,6 +199,14 @@ void powerOn()
   digitalWrite(PWRBTN, LOW);
   delay(1000);
   pinMode(PWRBTN, INPUT);
+  poweredOn = true;
+}
+
+// Camera power Off
+void powerOff()
+{
+  queueIn("PW0");
+  poweredOn = false;
 }
 
 // Write I2C EEPROM
@@ -517,28 +468,6 @@ void setupLED()
   pinMode(LED_OUT, OUTPUT);
   ledOff();
 }
-//    Arduino Pro Micro
-
-/*AVR_ATmega32U4__)
-void ledOff()
-{
-  TXLED0;
-  RXLED0;
-  ledState = false;
-}
-
-void ledOn()
-{
-  TXLED1;
-  RXLED1;
-  ledState = true;
-}
-
-void setupLED()
-{
-  ledOff();
-}
-*/
 
 
 // Interface to simple mechanical switches with software debounce.
@@ -571,7 +500,11 @@ void switchClosedCommand(int state)
       if (isMaster()) {
         roleChange();
       }
+      if (!poweredOn) {
       powerOn();
+      } else {
+      powerOff();
+      }
       break;
     default:
       break;
