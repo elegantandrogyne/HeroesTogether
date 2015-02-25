@@ -20,11 +20,10 @@ HeroesTogether is a vastly simplified fork of MewPro. Most functionality has bee
 * IR remote control,
 * light sensor control,
 * PIR sensor control,
-* video motion detect.
+* video motion detect
+* serial port communication.
 
-Any routines for controlling the camera via serial port are deprecated as well, and will be removed during further development.
-
-What will be left are routines for communicating via Herobus, master/slave mode setting, camera on, shutter release with a switch (w/ debouncing).
+What is left are routines for communicating via Herobus, master/slave mode setting, camera on, shutter release with a switch (w/ debouncing).
 Added a new functionality:  remote power on/off on switch.
 
 ------
