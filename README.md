@@ -9,39 +9,36 @@ Resources:
 * List of GoPro Serial Commands: [http://mewpro.cc/2014/10/14/list-of-i%C2%B2c-commands/]
 * Herobus Pinout of GoPro Hero 3+ Black: [http://mewpro.cc/?p=207]
 
+###Objective
+
+Make a device that allows synchronous power up, power down and shutter release on as many GoPro cameras as you want! Construct an array of cameras for 3D still or motion capture, then fire them exactly at the same time. The system is modular and scalable.
+The BacPacs™ are connected via a parallel bus (2 lines + GND) with any device that can short 3.3V to GND - no matter if it's two buttons, or another Arduino, Raspberry Pi etc. The controller can function as a time lapse device etc. Connecting multiple controllers is also possible.
+
+gopro-sync is a vastly simplified fork of MewPro. Most functionality has been removed, i.e.
+* shutter release without debouncing,
+* time alarms,
+* IR remote control,
+* light sensor control,
+* PIR sensor control,
+* video motion detect.
+
+Any routines for controlling the camera via serial port are deprecated as well, and will be removed during further development.
+
+What will be left are routines for communicating via Herobus, master/slave mode setting, camera on, shutter release with a switch (w/ debouncing).
+Added a new functionality:  remote power on/off on switch.
+
 ------
 
 ###How To Compile
-The following small-factor microcontroller boards are known to work with MewPro at least core functionalities and fit within the GoPro housing. Not all the sensors, however, are supported by each of them.
-
-* Arduino Pro Mini 328 3.3V 8MHz
-  - w/ Arduino IDE 1.5.7+
-  - if you have troubles on compiling unused or nonexistent libraries, simply comment out #include line as //#include (see Note* below)
-
-* Arduino Pro Micro - 3.3V 8MHz
-  - w/ Arduino IDE 1.5.7+
-  - if you have troubles in compiling unused or nonexistent libraries, simply comment out #include line as //#include (see Note* below)
+Use Arduino IDE for compiling and uploading the source to your Arduino Pro Mini 328.
 
 ------
 
-###Serial Line Commands
-By default MewPro is configured to use the serial line for controlling GoPro. All the commands are listed at https://gist.github.com/orangkucing/45dd2046b871828bf592#file-gopro-i2ccommands-md . You can simply type a command string to the serial console followed by a return; for example,
+###Controlling it!
+goprosync uses two lines connected via 1N4148 diodes for separation:
+* 3 - power on/off,
+* 5 - shutter release or movie start-stop.
 
-+ `PW0` : shutdown GoPro
-+ `TM0E0A0D090F00` : set GoPro clock to 2014-10-13 09:15:00 (hexadecimal of YYYY-MM-DD hh:mm:ss)
-+ `SY1` : shutter (camera mode) or start record (video mode)
-+ `SY0` : stop record (video mode)
+Basically, you connect all your goprosync units in parallel, and you connect two switches for shorting these lines to GND.
 
-Almost all listed commands that have a label named SET_CAMERA_xxx are usable. Moreover two special command are implemented in MewPro:
-
-+ `@` : GoPro power on
-+ `!` : toggle the role of MewPro (slave -> master or master -> slave)
-
-Also the command `!` can be used to write the necessary bytes to onboard blank/new I²C EEPROM chip: In order to work as a fake Dual Hero Bacpac™, MewPro's I²C EEPROM must contain such info.
-
-------
-
-Use one of the following, depending on the type of shutter release:
-
-+ shutter.c : Using external shutters such as CANON Timer Remote Controller TC-80N3.
-+ switch.c : Using mechanical switches such as push buttons or reed switches
+Have fun!
