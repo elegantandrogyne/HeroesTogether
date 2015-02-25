@@ -24,12 +24,7 @@ const int SMARTY = 0x60;
 // cycle time in milliseconds after block write
 const int WRITECYCLETIME = 5000;
 
-// EEPROM-dependent constants:
-// Camera accesses I2C EEPROM located at slave address 0x50 using 8-bit word address.
-// So any one of 3.3V EEPROMs 24XX00, 24XX01, 24XX02, 24XX04, 24XX08, or 24XX16 (XX = AA or LC) works with camera.
-//   Note: If not pin-compatible 24AA00 (SOT-23) is used, PCB modifications as well as following value changes are nesessary:
-//     const int WRITECYCLETIME = 4000;
-//     const int PAGESIZE = 1;
+
 // page size for block write
 const int PAGESIZE = 8; // 24XX01, 24XX02
 // const int PAGESIZE = 16; // 24XX04, 24XX08, 24XX16
@@ -49,10 +44,7 @@ const int PWRBTN           = A1; // (15) Pulled up by camera
 // Definitions of some BacPac command codes:
 
 const int GET_BACPAC_PROTOCOL_VERSION = ('v' << 8) + 's';
-const int SET_BACPAC_SHUTTER_ACTION   = ('S' << 8) + 'H';
 const int SET_BACPAC_3D_SYNC_READY    = ('S' << 8) + 'R';
-const int SET_BACPAC_WIFI             = ('W' << 8) + 'I'; // Defunct
-const int SET_BACPAC_FAULT            = ('F' << 8) + 'N';
 const int SET_BACPAC_POWER_DOWN       = ('P' << 8) + 'W';    //we'll need this...
 const int SET_BACPAC_SLAVE_SETTINGS   = ('X' << 8) + 'S';
 const int SET_BACPAC_HEARTBEAT        = ('H' << 8) + 'B';
@@ -64,24 +56,6 @@ volatile int queueb = 0, queuee = 0;
 void emptyQueue()
 {
   queueb = queuee = 0;
-}
-
-boolean inputAvailable()
-{
-  if (queueb != queuee || Serial.available()) {
-    return true;
-  }
-  return false;
-}
-
-byte myRead()
-{
-  if (queueb != queuee) {
-    byte c = queue[queueb];
-    queueb = (queueb + 1) % HT_BUFFER_LENGTH;
-    return c;
-  }
-  return Serial.read();
 }
 
 // Utility functions
@@ -123,37 +97,7 @@ void requestHandler()
 }
 
 
-// print out debug information to Arduino serial console  - deprecated
-void __printBuf(byte *p)
-{
-  int len = p[0] & 0x7f;
-
-  for (int i = 0; i <= len; i++) {
-    if (((i == 1 && isprint(p[1])) || (i == 2)) && ((p[1] != 0) && (isprint(p[2])))) {
-      if (i == 1) {
-        Serial.print(' ');
-      }
-      Serial.print((char) p[i]);
-    } else {
-      char tmp[4];
-      sprintf(tmp, " %02x", p[i]);
-      Serial.print(tmp);
-    }
-  }
-  Serial.println();
-}
-
-void _printInput()
-{
-  Serial.print('>');
-  __printBuf(recv);
-}
-
-// end deprecated
-
 void SendBufToCamera() {
-  Serial.print('<');
-  __printBuf(buf);
   digitalWrite(I2CINT, LOW);
   delayMicroseconds(30);
   digitalWrite(I2CINT, HIGH);
@@ -169,7 +113,7 @@ void resetI2C()
 }
 
 // Read I2C EEPROM to check if camera will be set up in master mode
-boolean isMaster()
+boolean isSlave()
 {
   byte id;
   WIRE.begin();
@@ -182,7 +126,7 @@ boolean isMaster()
   }
 
   resetI2C();
-  return (id == ID_MASTER);
+  return (id == ID_SLAVE);
 }
 
 // SET_CAMERA_3D_SYNCHRONIZE START_RECORD
@@ -225,7 +169,7 @@ void roleChange()
   pinMode(BPRDY, INPUT);
   delay(1000);
 
-  id = isMaster() ? ID_SLAVE : ID_MASTER;
+  id = isSlave() ? ID_MASTER : ID_SLAVE;
   
   WIRE.begin();
   for (unsigned int a = 0; a < 16; a += PAGESIZE) {
@@ -248,72 +192,7 @@ void roleChange()
   resetI2C();
 }
 
-// deprecated - we won't need serial communication for our project
-
-void checkCameraCommands()
-{
-  while (inputAvailable())  {
-    static boolean shiftable;
-    byte c = myRead();
-    switch (c) {
-      case ' ':
-        continue;
-      case '\n':
-        if (bufp != 1) {
-          buf[0] = bufp - 1;
-          bufp = 1;
-          SendBufToCamera();
-        }
-        return;
-      case '@':
-        bufp = 1;
-        Serial.println(F("camera power on"));
-        powerOn();
-        while (inputAvailable()) {
-          if (myRead() == '\n') {
-            return;
-          }
-        }
-        return;
-      case '!':
-        bufp = 1;
-        Serial.println(F("role change"));
-        roleChange();
-        while (inputAvailable()) {
-          if (myRead() == '\n') {
-            return;
-          }
-        }
-        return;
-      default:
-        if (bufp >= 3 && isxdigit(c)) {
-          c -= '0';
-          if (c >= 10) {
-            c = (c & 0x0f) + 9;
-          }    
-        }
-        if (bufp < 4) {
-          shiftable = true;
-          buf[bufp++] = c;
-        } else {
-          if (shiftable) { // TM requires six args; "TM0e080a0b2d03" sets time to 2014 Aug 10 11:45:03
-            buf[bufp-1] = (buf[bufp-1] << 4) + c;
-          } else {
-            buf[bufp++] = c;
-          }
-          shiftable = !shiftable;      
-        }
-        break;
-    }
-  }
-}
-
-
-// end deprecated
-
 boolean powerOnAtCameraMode = false;
-
-// unsure-if-needed functionality: may be necessary for HT to function - turn it off and test!
 
 void bacpacCommand()
 {
@@ -323,9 +202,7 @@ void bacpacCommand()
     buf[0] = 1; buf[1] = 1; // OK
     SendBufToCamera();
     delay(1000); // need some delay before I2C EEPROM read
-    if (isMaster()) {
-      queueIn("VO1"); // SET_CAMERA_VIDEO_OUTPUT to herobus
-    } else {
+    if (isSlave()) {
       queueIn("XS1");
     }
 
@@ -351,27 +228,6 @@ void bacpacCommand()
     if ((recv[9] << 8) + recv[10] == 0) {
       powerOnAtCameraMode = true;
     }
-    // every second message will be off if we send "XS0" here
-    queueIn("XS0");
-    // battery level: 0-3 (4 if charging)
-    Serial.print(F(" batt_level:")); Serial.print(recv[4]);
-    // photos remaining
-    Serial.print(F(" remaining:")); Serial.print((recv[5] << 8) + recv[6]);
-    // photos on microSD card
-    Serial.print(F(" photos:")); Serial.print((recv[7] << 8) + recv[8]);
-    // video time remaining (sec)
-    Serial.print(F(" seconds:")); Serial.print((recv[9] << 8) + recv[10]);
-    // videos on microSD card
-    Serial.print(F(" videos:")); Serial.print((recv[11] << 8) + recv[12]);
-    {
-      // maximum file size (4GB if FAT32, 0 means infinity if exFAT)
-      // if one video file exceeds the limit then GoPro will divide it into smaller files automatically
-      char tmp[13];
-      sprintf(tmp, " %02xGB %02x%02x%02x", recv[13], recv[14], recv[15], recv[16]);
-      Serial.print(tmp);
-    }
-    Serial.println();
-    break;
   case SET_BACPAC_HEARTBEAT: // response to GET_CAMERA_SETTING
     // to exit 3D mode, emulate detach bacpac
     pinMode(BPRDY, INPUT);
@@ -384,77 +240,17 @@ void bacpacCommand()
   }
 }
 
-// end of unsure-if-needed functionality
 
 void checkBacpacCommands()
 {
-  if (recvq) {
-    _printInput();
-    if (!(recv[0] & 0x80)) {// information bytes
-      switch (recv[0]) {
-        // Usual packet length (recv[0]) is 0 or 1.
-        case 0x27: // Packet length 0x27 does not exist but SMARTY_START
-          // Information on received packet here.
-          //
-          // recv[] meaning and/or relating bacpac command
-          // -----+-----------------------------------------------------
-          // 0x00   packet length (0x27)
-          // 0x01   always 0
-          //        TM SET_BACPAC_DATE_TIME
-          // 0x02     year (0-99)    
-          // 0x03     month (1-12)
-          // 0x04     day (1-31)
-          // 0x05     hour (0-23)
-          // 0x06     minute (0-59)
-          // 0x07     second (0-59)
-          // 0x08   CM SET_BACPAC_MODE
-          // 0x09   PR SET_BACPAC_PHOTO_RESOLUTION
-          // 0x0a   VR SET_BACPAC_VIDEORESOLUTION (Defunct; always 0xff)
-          // 0x0b   VV SET_BACPAC_VIDEORESOLUTION_VV
-          // 0x0c   FS SET_BACPAC_FRAMES_PER_SEC
-          // 0x0d   FV SET_BACPAC_FOV
-          // 0x0e   EX SET_BACPAC_EXPOSURE
-          // 0x0f   TI SET_BACPAC_PHOTO_XSEC
-          // 0x10   TS SET_BACPAC_TIME_LAPSE (Defunct; always 0xff)
-          // 0x11   BS SET_BACPAC_BEEP_SOUND
-          // 0x12   VM SET_BACPAC_NTSC_PAL
-          // 0x13   DS SET_BACPAC_ONSCREEN_DISPLAY
-          // 0x14   LB SET_BACPAC_LEDBLINK
-          // 0x15   PN SET_BACPAC_PHOTO_INVIDEO
-          // 0x16   LO SET_BACPAC_LOOPING_MODE
-          // 0x17   CS SET_BACPAC_CONTINUOUS_SHOT
-          // 0x18   BU SET_BACPAC_BURST_RATE
-          // 0x19   PT SET_BACPAC_PROTUNE_MODE
-          // 0x1a   AO SET_BACPAC_AUTO_POWER_OFF
-          // 0x1b   WB SET_BACPAC_WHITE_BALANCE
-          // 0x1c   (reserved)
-          // 0x1d   (reserved)
-          // 0x1e   (reserved)
-          // 0x1f   (reserved)
-          // 0x20   (reserved)
-          // 0x21   (reserved)
-          // 0x22   UP SET_BACPAC_FLIP_MIRROR
-          // 0x23   DM SET_BACPAC_DEFAULT_MODE
-          // 0x24   CO SET_BACPAC_PROTUNE_COLOR
-          // 0x25   GA SET_BACPAC_PROTUNE_GAIN
-          // 0x26   SP SET_BACPAC_PROTUNE_SHARPNESS
-          // 0x27   EV SET_BACPAC_PROTUNE_EXPOSURE_VALUE
-          // -----+-----------------------------------------------------
-
-          break;
-        default:
-          // do nothing
-          break;
-      }
-    } else { 
+  if (!recvq) {
+    if (recv[0] & 0x80) {
       bacpacCommand();
     }
     recvq = false;
   }
 }
 
-
-/* Atmega 328 - Arduino Pro Mini */
 boolean ledState;
 
 void ledOff()
@@ -475,7 +271,6 @@ void setupLED()
   ledOff();
 }
 
-
 //Switches control routine: SWITCH0 - start/stop recording, SWITCH1 - start recording (no stop), ONOFF - camera on/off
 
 void switchClosedCommand(int state)
@@ -493,7 +288,7 @@ void switchClosedCommand(int state)
       startRecording();
       break;
     case (1 << 2): // ONOFF_PIN
-      if (isMaster()) {
+      if (!isSlave()) {
         roleChange();
       }
       if (!poweredOn) {
@@ -559,12 +354,7 @@ void checkSwitch()
 boolean lastHerobusState = LOW;  // Will be HIGH when camera attached.
 
 void setup() 
-{
-  // Remark. Arduino Pro Mini 328 3.3V 8MHz is too slow to catch up with the highest 115200 baud.
-  //     cf. http://forum.arduino.cc/index.php?topic=54623.0
-  // Set 57600 baud or slower.
-  Serial.begin(57600);
-  
+{ 
   setupSwitch();
 
   setupLED(); // onboard LED setup 
@@ -594,7 +384,6 @@ void loop()
   }
 
   checkBacpacCommands();
-  checkCameraCommands();
   checkSwitch();
 }
 
