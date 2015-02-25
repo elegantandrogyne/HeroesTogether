@@ -1,5 +1,4 @@
-// 
-//   gopro-sync - a program for synchronized shutter release on multiple GoPro Hero 3+ Black edition cameras.
+//   HeroesTogether - a program for synchronized power on/off and shutter release on multiple GoPro Hero 3+ Black edition cameras.
 //
 //   Forked from orangkucing's MewPro: Control GoPro Hero 3+ Black from Arduino
 //   Simplified, customized and (hopefully) portable to most micro-controllers...
@@ -7,11 +6,11 @@
 
 #include <Arduino.h>
 #include <Wire.h> 
-#define GOPROSYNC_BUFFER_LENGTH 64
+#define HT_BUFFER_LENGTH 64
 #define I2C_NOSTOP false
 #define I2C_STOP true
-#define BUFFER_LENGTH     GOPROSYNC_BUFFER_LENGTH
-#define TWI_BUFFER_LENGTH GOPROSYNC_BUFFER_LENGTH
+#define BUFFER_LENGTH     HT_BUFFER_LENGTH
+#define TWI_BUFFER_LENGTH HT_BUFFER_LENGTH
 #define WIRE              Wire
 
 // GoPro Dual Hero EEPROM IDs
@@ -59,7 +58,7 @@ const int SET_BACPAC_SLAVE_SETTINGS   = ('X' << 8) + 'S';
 const int SET_BACPAC_HEARTBEAT        = ('H' << 8) + 'B';
 
 
-byte queue[GOPROSYNC_BUFFER_LENGTH];
+byte queue[HT_BUFFER_LENGTH];
 volatile int queueb = 0, queuee = 0;
 
 void emptyQueue()
@@ -79,7 +78,7 @@ byte myRead()
 {
   if (queueb != queuee) {
     byte c = queue[queueb];
-    queueb = (queueb + 1) % GOPROSYNC_BUFFER_LENGTH;
+    queueb = (queueb + 1) % HT_BUFFER_LENGTH;
     return c;
   }
   return Serial.read();
@@ -90,14 +89,14 @@ void queueIn(const char *p)
 {
   int i;
   for (i = 0; p[i] != 0; i++) {
-    queue[(queuee + i) % GOPROSYNC_BUFFER_LENGTH] = p[i];
+    queue[(queuee + i) % HT_BUFFER_LENGTH] = p[i];
   }
-  queue[(queuee + i) % GOPROSYNC_BUFFER_LENGTH] = '\n';
-  queuee = (queuee + i + 1) % GOPROSYNC_BUFFER_LENGTH;
+  queue[(queuee + i) % HT_BUFFER_LENGTH] = '\n';
+  queuee = (queuee + i + 1) % HT_BUFFER_LENGTH;
 }
 
 
-byte buf[GOPROSYNC_BUFFER_LENGTH], recv[GOPROSYNC_BUFFER_LENGTH];
+byte buf[HT_BUFFER_LENGTH], recv[HT_BUFFER_LENGTH];
 int bufp = 1;
 volatile boolean recvq = false;
 
@@ -314,7 +313,7 @@ void checkCameraCommands()
 
 boolean powerOnAtCameraMode = false;
 
-// unsure-if-needed functionality: may be necessary for goprosync to function - turn it off and test!
+// unsure-if-needed functionality: may be necessary for HT to function - turn it off and test!
 
 void bacpacCommand()
 {
@@ -569,7 +568,7 @@ void setup()
   setupSwitch();
 
   setupLED(); // onboard LED setup 
-  pinMode(BPRDY, OUTPUT); digitalWrite(BPRDY, LOW);    // Show camera goprosync attach. 
+  pinMode(BPRDY, OUTPUT); digitalWrite(BPRDY, LOW);    // Show camera HeroesTogether unit attach. 
   pinMode(TRIG, OUTPUT); digitalWrite(TRIG, LOW);
 
   // don't forget to switch pin configurations to INPUT.
