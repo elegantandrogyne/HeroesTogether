@@ -139,6 +139,8 @@ void _printInput()
   __printBuf(recv);
 }
 
+// end deprecated
+
 void SendBufToCamera() {
   Serial.print('<');
   __printBuf(buf);
@@ -240,6 +242,8 @@ void roleChange()
   resetI2C();
 }
 
+// deprecated - we won't need serial communication for our project
+
 void checkCameraCommands()
 {
   while (inputAvailable())  {
@@ -299,6 +303,9 @@ void checkCameraCommands()
 }
 
 
+// end deprecated
+
+
 boolean powerOnAtCameraMode = false;
 
 const int GET_BACPAC_PROTOCOL_VERSION = ('v' << 8) + 's';
@@ -306,9 +313,12 @@ const int SET_BACPAC_SHUTTER_ACTION   = ('S' << 8) + 'H';
 const int SET_BACPAC_3D_SYNC_READY    = ('S' << 8) + 'R';
 const int SET_BACPAC_WIFI             = ('W' << 8) + 'I'; // Defunct
 const int SET_BACPAC_FAULT            = ('F' << 8) + 'N';
-const int SET_BACPAC_POWER_DOWN       = ('P' << 8) + 'W';
+const int SET_BACPAC_POWER_DOWN       = ('P' << 8) + 'W';    //we'll need this...
 const int SET_BACPAC_SLAVE_SETTINGS   = ('X' << 8) + 'S';
 const int SET_BACPAC_HEARTBEAT        = ('H' << 8) + 'B';
+
+
+// unsure-if-needed functionality: may be necessary for goprosync to function - turn it off and test!
 
 void bacpacCommand()
 {
@@ -378,6 +388,8 @@ void bacpacCommand()
     break;
   }
 }
+
+// end of unsure-if-needed functionality
 
 void checkBacpacCommands()
 {
@@ -470,17 +482,7 @@ void setupLED()
 }
 
 
-// Interface to simple mechanical switches with software debounce.
-//
-// There are possibly two types of switch functions in video mode, and we assign them in the sample code as:
-//    SWITCH0_PIN --- ON = start recording --> OFF = do nothing --> ON = stop recording --> OFF = do nothing
-//    SWITCH1_PIN --- ON = start recording --> OFF = stop recording
-//    ONOFF_PIN   --- ON = power on        --> OFF = do nothing --> ON = power off      --> OFF = do nothing
-//
-// Simple mechanical switches require debounce. For software debounce, original code can be found at everywhere, for example,
-//   http://www.arduino.cc/en/Tutorial/Debounce
-//
-
+//Switches control routine: SWITCH0 - start/stop recording, SWITCH1 - start recording (no stop), ONOFF - camera on/off
 
 void switchClosedCommand(int state)
 {
@@ -572,7 +574,7 @@ void setup()
   setupSwitch();
 
   setupLED(); // onboard LED setup 
-  pinMode(BPRDY, OUTPUT); digitalWrite(BPRDY, LOW);    // Show camera MewPro attach. 
+  pinMode(BPRDY, OUTPUT); digitalWrite(BPRDY, LOW);    // Show camera goprosync attach. 
   pinMode(TRIG, OUTPUT); digitalWrite(TRIG, LOW);
 
   // don't forget to switch pin configurations to INPUT.
