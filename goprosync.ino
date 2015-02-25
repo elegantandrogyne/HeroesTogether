@@ -14,6 +14,26 @@
 #define TWI_BUFFER_LENGTH GOPROSYNC_BUFFER_LENGTH
 #define WIRE              Wire
 
+// GoPro Dual Hero EEPROM IDs
+const int ID_MASTER = 4;
+const int ID_SLAVE  = 5;
+
+// I2C slave addresses
+const int I2CEEPROM = 0x50;
+const int SMARTY = 0x60;
+
+// cycle time in milliseconds after block write
+const int WRITECYCLETIME = 5000;
+
+// EEPROM-dependent constants:
+// Camera accesses I2C EEPROM located at slave address 0x50 using 8-bit word address.
+// So any one of 3.3V EEPROMs 24XX00, 24XX01, 24XX02, 24XX04, 24XX08, or 24XX16 (XX = AA or LC) works with camera.
+//   Note: If not pin-compatible 24AA00 (SOT-23) is used, PCB modifications as well as following value changes are nesessary:
+//     const int WRITECYCLETIME = 4000;
+//     const int PAGESIZE = 1;
+// page size for block write
+const int PAGESIZE = 8; // 24XX01, 24XX02
+// const int PAGESIZE = 16; // 24XX04, 24XX08, 24XX16
 
 // Definitions of pins:
 
@@ -23,8 +43,20 @@ const int SWITCH1_PIN      = 6;  // Software debounced; ON-start OFF-stop
 const int I2CINT           = 10; // (SS)
 const int TRIG             = 11; // (MOSI)
 const int BPRDY            = 12; // (MISO) Pulled up by camera
+const int LED_OUT          = 13; // Arduino onboard LED; HIGH (= ON) while recording
 const int HBUSRDY          = A0; // (14)
 const int PWRBTN           = A1; // (15) Pulled up by camera
+
+// Definitions of some BacPac command codes:
+
+const int GET_BACPAC_PROTOCOL_VERSION = ('v' << 8) + 's';
+const int SET_BACPAC_SHUTTER_ACTION   = ('S' << 8) + 'H';
+const int SET_BACPAC_3D_SYNC_READY    = ('S' << 8) + 'R';
+const int SET_BACPAC_WIFI             = ('W' << 8) + 'I'; // Defunct
+const int SET_BACPAC_FAULT            = ('F' << 8) + 'N';
+const int SET_BACPAC_POWER_DOWN       = ('P' << 8) + 'W';    //we'll need this...
+const int SET_BACPAC_SLAVE_SETTINGS   = ('X' << 8) + 'S';
+const int SET_BACPAC_HEARTBEAT        = ('H' << 8) + 'B';
 
 
 byte queue[GOPROSYNC_BUFFER_LENGTH];
@@ -64,27 +96,6 @@ void queueIn(const char *p)
   queuee = (queuee + i + 1) % GOPROSYNC_BUFFER_LENGTH;
 }
 
-
-// GoPro Dual Hero EEPROM IDs
-const int ID_MASTER = 4;
-const int ID_SLAVE  = 5;
-
-// I2C slave addresses
-const int I2CEEPROM = 0x50;
-const int SMARTY = 0x60;
-
-// Camera accesses I2C EEPROM located at slave address 0x50 using 8-bit word address.
-// So any one of 3.3V EEPROMs 24XX00, 24XX01, 24XX02, 24XX04, 24XX08, or 24XX16 (XX = AA or LC) works with camera.
-//   Note: If not pin-compatible 24AA00 (SOT-23) is used, PCB modifications as well as following value changes are nesessary:
-//     const int WRITECYCLETIME = 4000;
-//     const int PAGESIZE = 1;
-//
-// cycle time in milliseconds after block write
-const int WRITECYCLETIME = 5000;
-//
-// page size for block write
-const int PAGESIZE = 8; // 24XX01, 24XX02
-// const int PAGESIZE = 16; // 24XX04, 24XX08, 24XX16
 
 byte buf[GOPROSYNC_BUFFER_LENGTH], recv[GOPROSYNC_BUFFER_LENGTH];
 int bufp = 1;
@@ -158,7 +169,7 @@ void resetI2C()
   emptyQueue();
 }
 
-// Read I2C EEPROM
+// Read I2C EEPROM to check if camera will be set up in master mode
 boolean isMaster()
 {
   byte id;
@@ -166,11 +177,7 @@ boolean isMaster()
   WIRE.beginTransmission(I2CEEPROM);
   WIRE.write((byte) 0);
   WIRE.endTransmission(I2C_NOSTOP);
-#if defined(__MK20DX256__) || defined(__MK20DX128__)
-  WIRE.requestFrom(I2CEEPROM, 1, I2C_NOSTOP);
-#else
-  WIRE.requestFrom(I2CEEPROM, 1);
-#endif
+  WIRE.requestFrom(I2CEEPROM, 1);     // platform-dependent
   if (WIRE.available()) {
     id = WIRE.read();
   }
@@ -305,18 +312,7 @@ void checkCameraCommands()
 
 // end deprecated
 
-
 boolean powerOnAtCameraMode = false;
-
-const int GET_BACPAC_PROTOCOL_VERSION = ('v' << 8) + 's';
-const int SET_BACPAC_SHUTTER_ACTION   = ('S' << 8) + 'H';
-const int SET_BACPAC_3D_SYNC_READY    = ('S' << 8) + 'R';
-const int SET_BACPAC_WIFI             = ('W' << 8) + 'I'; // Defunct
-const int SET_BACPAC_FAULT            = ('F' << 8) + 'N';
-const int SET_BACPAC_POWER_DOWN       = ('P' << 8) + 'W';    //we'll need this...
-const int SET_BACPAC_SLAVE_SETTINGS   = ('X' << 8) + 'S';
-const int SET_BACPAC_HEARTBEAT        = ('H' << 8) + 'B';
-
 
 // unsure-if-needed functionality: may be necessary for goprosync to function - turn it off and test!
 
@@ -461,7 +457,6 @@ void checkBacpacCommands()
 
 /* Atmega 328 - Arduino Pro Mini */
 boolean ledState;
-const int LED_OUT          = 13; // Arduino onboard LED; HIGH (= ON) while recording
 
 void ledOff()
 {
