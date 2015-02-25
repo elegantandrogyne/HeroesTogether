@@ -538,7 +538,7 @@ void checkSwitch()
   static int buttonState;
 
   // read switch with debounce
-  int reading = (digitalRead(SWITCH0_PIN) ? 0 : (1 << 0)) | (digitalRead(SWITCH1_PIN) ? 0 : (1 << 1)) | (digitalRead(ONOFF_PIN) ? 0 : (1 << 1));
+  int reading = (digitalRead(SWITCH0_PIN) ? 0 : (1 << 0)) | (digitalRead(SWITCH1_PIN) ? 0 : (1 << 1)) | (digitalRead(ONOFF_PIN) ? 0 : (1 << 2));
   if (reading != lastButtonState) {
     lastDebounceTime = millis();
   }
