@@ -1,16 +1,10 @@
-//   HeroesTogether - a program for synchronized power on/off and shutter release on multiple GoPro Hero 3+ Black edition cameras.
-//
-//   Forked from orangkucing's MewPro: Control GoPro Hero 3+ Black from Arduino
-//   Simplified, customized and (hopefully) portable to most micro-controllers...
-//
-
+#include <Wire.h>
 #include <Arduino.h>
-#include <Wire.h> 
-#define HT_BUFFER_LENGTH 64
+#define MEWPRO_BUFFER_LENGTH 64
 #define I2C_NOSTOP false
 #define I2C_STOP true
-#define BUFFER_LENGTH     HT_BUFFER_LENGTH
-#define TWI_BUFFER_LENGTH HT_BUFFER_LENGTH
+#define BUFFER_LENGTH     MEWPRO_BUFFER_LENGTH
+#define TWI_BUFFER_LENGTH MEWPRO_BUFFER_LENGTH
 #define WIRE              Wire
 
 // GoPro Dual Hero EEPROM IDs
@@ -20,18 +14,21 @@ const int ID_SLAVE  = 5;
 // I2C slave addresses
 const int I2CEEPROM = 0x50;
 const int SMARTY = 0x60;
-
-// cycle time in milliseconds after block write
 const int WRITECYCLETIME = 5000;
+const int PAGESIZE = 8; 
 
+//BacPac commands:
+const int GET_BACPAC_PROTOCOL_VERSION = ('v' << 8) + 's';
+const int SET_BACPAC_SHUTTER_ACTION   = ('S' << 8) + 'H';
+const int SET_BACPAC_3D_SYNC_READY    = ('S' << 8) + 'R';
+const int SET_BACPAC_WIFI             = ('W' << 8) + 'I'; // Defunct
+const int SET_BACPAC_FAULT            = ('F' << 8) + 'N';
+const int SET_BACPAC_POWER_DOWN       = ('P' << 8) + 'W';
+const int SET_BACPAC_SLAVE_SETTINGS   = ('X' << 8) + 'S';
+const int SET_BACPAC_HEARTBEAT        = ('H' << 8) + 'B';
 
-// page size for block write
-const int PAGESIZE = 8; // 24XX01, 24XX02
-// const int PAGESIZE = 16; // 24XX04, 24XX08, 24XX16
-
-// Definitions of pins:
-
-const int ONOFF_PIN        = 3;  // Software-debounced on-off button
+// Pin definitions
+const int POWER_SW         = 3;  // (Not in use)
 const int SWITCH0_PIN      = 5;  // Software debounced; ON-start ON-stop
 const int SWITCH1_PIN      = 6;  // Software debounced; ON-start OFF-stop
 const int I2CINT           = 10; // (SS)
@@ -41,16 +38,9 @@ const int LED_OUT          = 13; // Arduino onboard LED; HIGH (= ON) while recor
 const int HBUSRDY          = A0; // (14)
 const int PWRBTN           = A1; // (15) Pulled up by camera
 
-// Definitions of some BacPac command codes:
+// Queue section:
 
-const int GET_BACPAC_PROTOCOL_VERSION = ('v' << 8) + 's';
-const int SET_BACPAC_3D_SYNC_READY    = ('S' << 8) + 'R';
-const int SET_BACPAC_POWER_DOWN       = ('P' << 8) + 'W';    //we'll need this...
-const int SET_BACPAC_SLAVE_SETTINGS   = ('X' << 8) + 'S';
-const int SET_BACPAC_HEARTBEAT        = ('H' << 8) + 'B';
-
-
-byte queue[HT_BUFFER_LENGTH];
+byte queue[MEWPRO_BUFFER_LENGTH];
 volatile int queueb = 0, queuee = 0;
 
 void emptyQueue()
@@ -58,24 +48,59 @@ void emptyQueue()
   queueb = queuee = 0;
 }
 
+boolean inputAvailable()
+{
+  if (queueb != queuee || Serial.available()) {
+    return true;
+  }
+  return false;
+}
+
+byte myRead()
+{
+  if (queueb != queuee) {
+    byte c = queue[queueb];
+    queueb = (queueb + 1) % MEWPRO_BUFFER_LENGTH;
+    return c;
+  }
+  return Serial.read();
+}
+
 // Utility functions
 void queueIn(const char *p)
 {
   int i;
   for (i = 0; p[i] != 0; i++) {
-    queue[(queuee + i) % HT_BUFFER_LENGTH] = p[i];
+    queue[(queuee + i) % MEWPRO_BUFFER_LENGTH] = p[i];
   }
-  queue[(queuee + i) % HT_BUFFER_LENGTH] = '\n';
-  queuee = (queuee + i + 1) % HT_BUFFER_LENGTH;
+  queue[(queuee + i) % MEWPRO_BUFFER_LENGTH] = '\n';
+  queuee = (queuee + i + 1) % MEWPRO_BUFFER_LENGTH;
 }
 
+// LED control:
 
-byte buf[HT_BUFFER_LENGTH], recv[HT_BUFFER_LENGTH];
+boolean ledState;
+void ledOff()
+{
+  digitalWrite(LED_OUT, LOW);
+  ledState = false;
+}
+
+void ledOn()
+{
+  digitalWrite(LED_OUT, HIGH);
+  ledState = true;
+}
+
+// I2C commands:
+
+byte buf[MEWPRO_BUFFER_LENGTH], recv[MEWPRO_BUFFER_LENGTH];
 int bufp = 1;
 volatile boolean recvq = false;
 
-void receiveHandler(int numBytes)     // depends on platform
+// interrupt
 
+void receiveHandler(int numBytes)
 {
   int i = 0;
   while (WIRE.available()) {
@@ -96,8 +121,35 @@ void requestHandler()
   WIRE.write(buf, (int) buf[0] + 1);
 }
 
+// print out debug information to Arduino serial console
+void __printBuf(byte *p)
+{
+  int len = p[0] & 0x7f;
+
+  for (int i = 0; i <= len; i++) {
+    if (i == 1 && isprint(p[1]) || i == 2 && p[1] != 0 && isprint(p[2])) {
+      if (i == 1) {
+        Serial.print(' ');
+      }
+      Serial.print((char) p[i]);
+    } else {
+      char tmp[4];
+      sprintf(tmp, " %02x", p[i]);
+      Serial.print(tmp);
+    }
+  }
+  Serial.println();
+}
+
+void _printInput()
+{
+  Serial.print('>');
+  __printBuf(recv);
+}
 
 void SendBufToCamera() {
+  Serial.print('<');
+  __printBuf(buf);
   digitalWrite(I2CINT, LOW);
   delayMicroseconds(30);
   digitalWrite(I2CINT, HIGH);
@@ -112,21 +164,21 @@ void resetI2C()
   emptyQueue();
 }
 
-// Read I2C EEPROM to check if camera will be set up in master mode
-boolean isSlave()
+// Read I2C EEPROM
+boolean isMaster()
 {
   byte id;
   WIRE.begin();
   WIRE.beginTransmission(I2CEEPROM);
   WIRE.write((byte) 0);
   WIRE.endTransmission(I2C_NOSTOP);
-  WIRE.requestFrom(I2CEEPROM, 1);     // platform-dependent
+  WIRE.requestFrom(I2CEEPROM, 1);
   if (WIRE.available()) {
     id = WIRE.read();
   }
 
   resetI2C();
-  return (id == ID_SLAVE);
+  return (id == ID_MASTER);
 }
 
 // SET_CAMERA_3D_SYNCHRONIZE START_RECORD
@@ -141,9 +193,6 @@ void stopRecording()
   queueIn("SY0");
 }
 
-// When off, set this to 0
-boolean poweredOn = false;
-
 // Camera power On
 void powerOn()
 {
@@ -151,14 +200,10 @@ void powerOn()
   digitalWrite(PWRBTN, LOW);
   delay(1000);
   pinMode(PWRBTN, INPUT);
-  poweredOn = true;
 }
 
-// Camera power Off
-void powerOff()
-{
+void powerOff() {
   queueIn("PW0");
-  poweredOn = false;
 }
 
 // Write I2C EEPROM
@@ -169,7 +214,7 @@ void roleChange()
   pinMode(BPRDY, INPUT);
   delay(1000);
 
-  id = isSlave() ? ID_MASTER : ID_SLAVE;
+  id = isMaster() ? ID_SLAVE : ID_MASTER;
   
   WIRE.begin();
   for (unsigned int a = 0; a < 16; a += PAGESIZE) {
@@ -192,20 +237,84 @@ void roleChange()
   resetI2C();
 }
 
+void checkCameraCommands()
+{
+  while (inputAvailable())  {
+    static boolean shiftable;
+    byte c = myRead();
+    switch (c) {
+      case ' ':
+        continue;
+      case '\n':
+        if (bufp != 1) {
+          buf[0] = bufp - 1;
+          bufp = 1;
+          SendBufToCamera();
+        }
+        return;
+      case '@':
+        bufp = 1;
+        Serial.println(F("camera power on"));
+        powerOn();
+        while (inputAvailable()) {
+          if (myRead() == '\n') {
+            return;
+          }
+        }
+        return;
+      case '!':
+        bufp = 1;
+        Serial.println(F("role change"));
+        roleChange();
+        while (inputAvailable()) {
+          if (myRead() == '\n') {
+            return;
+          }
+        }
+        return;
+      default:
+        if (bufp >= 3 && isxdigit(c)) {
+          c -= '0';
+          if (c >= 10) {
+            c = (c & 0x0f) + 9;
+          }    
+        }
+        if (bufp < 4) {
+          shiftable = true;
+          buf[bufp++] = c;
+        } else {
+          if (shiftable) { // TM requires six args; "TM0e080a0b2d03" sets time to 2014 Aug 10 11:45:03
+            buf[bufp-1] = (buf[bufp-1] << 4) + c;
+          } else {
+            buf[bufp++] = c;
+          }
+          shiftable = !shiftable;      
+        }
+        break;
+    }
+  }
+}
+
+// Bacpac Commands:
+
 boolean powerOnAtCameraMode = false;
+
+// what does this mean? i have no idea...
+unsigned char validationString[19] = { 18, 0, 0, 3, 1, 0, 1, 0x3f, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0 };
 
 void bacpacCommand()
 {
   switch ((recv[1] << 8) + recv[2]) {
   case GET_BACPAC_PROTOCOL_VERSION:
     ledOff();
-    buf[0] = 1; buf[1] = 1; // OK
+    memcpy(buf, validationString, sizeof validationString);
     SendBufToCamera();
     delay(1000); // need some delay before I2C EEPROM read
-    if (isSlave()) {
+    if (isMaster()) {
+      queueIn("VO1"); // SET_CAMERA_VIDEO_OUTPUT to herobus
+    } else {
       queueIn("XS1");
     }
-
     break;
   case SET_BACPAC_3D_SYNC_READY:
     switch (recv[3]) {
@@ -228,6 +337,27 @@ void bacpacCommand()
     if ((recv[9] << 8) + recv[10] == 0) {
       powerOnAtCameraMode = true;
     }
+    // every second message will be off if we send "XS0" here
+    queueIn("XS0");
+    // battery level: 0-3 (4 if charging)
+    Serial.print(F(" batt_level:")); Serial.print(recv[4]);
+    // photos remaining
+    Serial.print(F(" remaining:")); Serial.print((recv[5] << 8) + recv[6]);
+    // photos on microSD card
+    Serial.print(F(" photos:")); Serial.print((recv[7] << 8) + recv[8]);
+    // video time remaining (sec)
+    Serial.print(F(" seconds:")); Serial.print((recv[9] << 8) + recv[10]);
+    // videos on microSD card
+    Serial.print(F(" videos:")); Serial.print((recv[11] << 8) + recv[12]);
+    {
+      // maximum file size (4GB if FAT32, 0 means infinity if exFAT)
+      // if one video file exceeds the limit then GoPro will divide it into smaller files automatically
+      char tmp[13];
+      sprintf(tmp, " %02xGB %02x%02x%02x", recv[13], recv[14], recv[15], recv[16]);
+      Serial.print(tmp);
+    }
+    Serial.println();
+    break;
   case SET_BACPAC_HEARTBEAT: // response to GET_CAMERA_SETTING
     // to exit 3D mode, emulate detach bacpac
     pinMode(BPRDY, INPUT);
@@ -240,38 +370,27 @@ void bacpacCommand()
   }
 }
 
-
 void checkBacpacCommands()
 {
-  if (!recvq) {
-    if (recv[0] & 0x80) {
+  if (recvq) {
+    _printInput();
+    if (!(recv[0] & 0x80)) {// information bytes
+      switch (recv[0]) {
+        // Usual packet length (recv[0]) is 0 or 1.
+        case 0x27: 
+          break;
+        default:
+          // do nothing
+          break;
+      }
+    } else { 
       bacpacCommand();
     }
     recvq = false;
   }
 }
 
-boolean ledState;
-
-void ledOff()
-{
-  digitalWrite(LED_OUT, LOW);
-  ledState = false;
-}
-
-void ledOn()
-{
-  digitalWrite(LED_OUT, HIGH);
-  ledState = true;
-}
-
-void setupLED()
-{
-  pinMode(LED_OUT, OUTPUT);
-  ledOff();
-}
-
-//Switches control routine: SWITCH0 - start/stop recording, SWITCH1 - start recording (no stop), ONOFF - camera on/off
+// Switches:
 
 void switchClosedCommand(int state)
 {
@@ -287,16 +406,6 @@ void switchClosedCommand(int state)
     case (1 << 1): // SWITCH1_PIN
       startRecording();
       break;
-    case (1 << 2): // ONOFF_PIN
-      if (!isSlave()) {
-        roleChange();
-      }
-      if (!poweredOn) {
-      powerOn();
-      } else {
-      powerOff();
-      }
-      break;
     default:
       break;
   }
@@ -306,25 +415,16 @@ void switchOpenedCommand(int state)
 {
   switch (state) {
     case (1 << 0): // SWITCH0_PIN
-      delay(100);
+      delay(1000);
       break;
     case (1 << 1): // SWITCH1_PIN
       stopRecording();
-      break;
-    case (1 << 2): // ONOFF_PIN
-      delay(1000);
       break;
     default:
       break;
   }
 }
 
-void setupSwitch()
-{
-  pinMode(SWITCH0_PIN, INPUT_PULLUP);
-  pinMode(SWITCH1_PIN, INPUT_PULLUP);
-  pinMode(ONOFF_PIN, INPUT_PULLUP);
-}
 
 void checkSwitch()
 {
@@ -333,7 +433,7 @@ void checkSwitch()
   static int buttonState;
 
   // read switch with debounce
-  int reading = (digitalRead(SWITCH0_PIN) ? 0 : (1 << 0)) | (digitalRead(SWITCH1_PIN) ? 0 : (1 << 1)) | (digitalRead(ONOFF_PIN) ? 0 : (1 << 2));
+  int reading = (digitalRead(SWITCH0_PIN) ? 0 : (1 << 0)) | (digitalRead(SWITCH1_PIN) ? 0 : (1 << 1));
   if (reading != lastButtonState) {
     lastDebounceTime = millis();
   }
@@ -350,21 +450,39 @@ void checkSwitch()
   lastButtonState = reading;
 }
 
+void checkPower() {
+  boolean lastState = 0;
+  if ((digitalRead(POWER_SW)) && (!lastState)) {
+    powerOn();
+    lastState = 1;
+  } else if ((!digitalRead(POWER_SW)) && (lastState)) {
+    powerOff();
+    lastState = 0;
+  }
+}
+
 
 boolean lastHerobusState = LOW;  // Will be HIGH when camera attached.
 
 void setup() 
-{ 
-  setupSwitch();
-
-  setupLED(); // onboard LED setup 
-  pinMode(BPRDY, OUTPUT); digitalWrite(BPRDY, LOW);    // Show camera HeroesTogether unit attach. 
+{
+  Serial.begin(57600);
+  
+  pinMode(SWITCH0_PIN, INPUT_PULLUP);
+  pinMode(SWITCH1_PIN, INPUT_PULLUP);
+  pinMode(POWER_SW, INPUT_PULLUP);
+  pinMode(LED_OUT, OUTPUT);
+  ledOff();
+  pinMode(BPRDY, OUTPUT); digitalWrite(BPRDY, LOW);    // Show camera MewPro attach. 
   pinMode(TRIG, OUTPUT); digitalWrite(TRIG, LOW);
 
   // don't forget to switch pin configurations to INPUT.
   pinMode(I2CINT, INPUT);  // Teensy: default disabled
   pinMode(HBUSRDY, INPUT); // default: analog input
   pinMode(PWRBTN, INPUT);  // default: analog input
+  if (isMaster()) {
+    roleChange();
+  }
 }
 
 void loop() 
@@ -383,7 +501,9 @@ void loop()
     }
   }
 
+  checkPower();
   checkBacpacCommands();
+  checkCameraCommands();
   checkSwitch();
 }
 
