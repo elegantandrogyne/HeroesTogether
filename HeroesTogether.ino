@@ -28,7 +28,7 @@ const int SET_BACPAC_SLAVE_SETTINGS   = ('X' << 8) + 'S';
 const int SET_BACPAC_HEARTBEAT        = ('H' << 8) + 'B';
 
 // Pin definitions
-const int POWER_SW         = 3;  // (Not in use)
+const int POWER_SW         = 3;  // Power switch
 const int SWITCH0_PIN      = 5;  // Software debounced; ON-start ON-stop
 const int SWITCH1_PIN      = 6;  // Software debounced; ON-start OFF-stop
 const int I2CINT           = 10; // (SS)
