@@ -48,13 +48,6 @@ void emptyQueue()
   queueb = queuee = 0;
 }
 
-boolean inputAvailable()
-{
-  if (queueb != queuee || Serial.available()) {
-    return true;
-  }
-  return false;
-}
 
 byte myRead()
 {
@@ -63,7 +56,6 @@ byte myRead()
     queueb = (queueb + 1) % MEWPRO_BUFFER_LENGTH;
     return c;
   }
-  return Serial.read();
 }
 
 // Utility functions
@@ -121,35 +113,7 @@ void requestHandler()
   WIRE.write(buf, (int) buf[0] + 1);
 }
 
-// print out debug information to Arduino serial console
-void __printBuf(byte *p)
-{
-  int len = p[0] & 0x7f;
-
-  for (int i = 0; i <= len; i++) {
-    if (i == 1 && isprint(p[1]) || i == 2 && p[1] != 0 && isprint(p[2])) {
-      if (i == 1) {
-        Serial.print(' ');
-      }
-      Serial.print((char) p[i]);
-    } else {
-      char tmp[4];
-      sprintf(tmp, " %02x", p[i]);
-      Serial.print(tmp);
-    }
-  }
-  Serial.println();
-}
-
-void _printInput()
-{
-  Serial.print('>');
-  __printBuf(recv);
-}
-
 void SendBufToCamera() {
-  Serial.print('<');
-  __printBuf(buf);
   digitalWrite(I2CINT, LOW);
   delayMicroseconds(30);
   digitalWrite(I2CINT, HIGH);
@@ -239,12 +203,10 @@ void roleChange()
 
 void checkCameraCommands()
 {
-  while (inputAvailable())  {
+  while (queueb != queuee)  {
     static boolean shiftable;
     byte c = myRead();
     switch (c) {
-      case ' ':
-        continue;
       case '\n':
         if (bufp != 1) {
           buf[0] = bufp - 1;
@@ -252,26 +214,7 @@ void checkCameraCommands()
           SendBufToCamera();
         }
         return;
-      case '@':
-        bufp = 1;
-        Serial.println(F("camera power on"));
-        powerOn();
-        while (inputAvailable()) {
-          if (myRead() == '\n') {
-            return;
-          }
-        }
-        return;
-      case '!':
-        bufp = 1;
-        Serial.println(F("role change"));
-        roleChange();
-        while (inputAvailable()) {
-          if (myRead() == '\n') {
-            return;
-          }
-        }
-        return;
+
       default:
         if (bufp >= 3 && isxdigit(c)) {
           c -= '0';
@@ -283,7 +226,7 @@ void checkCameraCommands()
           shiftable = true;
           buf[bufp++] = c;
         } else {
-          if (shiftable) { // TM requires six args; "TM0e080a0b2d03" sets time to 2014 Aug 10 11:45:03
+          if (shiftable) {
             buf[bufp-1] = (buf[bufp-1] << 4) + c;
           } else {
             buf[bufp++] = c;
@@ -312,14 +255,13 @@ void bacpacCommand()
     delay(1000); // need some delay before I2C EEPROM read
     if (isMaster()) {
       queueIn("VO1"); // SET_CAMERA_VIDEO_OUTPUT to herobus
-    } else {
+      } else {
       queueIn("XS1");
     }
     break;
   case SET_BACPAC_3D_SYNC_READY:
     switch (recv[3]) {
     case 0: // CAPTURE_STOP
-      // video stops at FALLING edge in MASTER NORMAL mode
       digitalWrite(TRIG, HIGH);
       delayMicroseconds(3);
       digitalWrite(TRIG, LOW);
@@ -337,26 +279,6 @@ void bacpacCommand()
     if ((recv[9] << 8) + recv[10] == 0) {
       powerOnAtCameraMode = true;
     }
-    // every second message will be off if we send "XS0" here
-    queueIn("XS0");
-    // battery level: 0-3 (4 if charging)
-    Serial.print(F(" batt_level:")); Serial.print(recv[4]);
-    // photos remaining
-    Serial.print(F(" remaining:")); Serial.print((recv[5] << 8) + recv[6]);
-    // photos on microSD card
-    Serial.print(F(" photos:")); Serial.print((recv[7] << 8) + recv[8]);
-    // video time remaining (sec)
-    Serial.print(F(" seconds:")); Serial.print((recv[9] << 8) + recv[10]);
-    // videos on microSD card
-    Serial.print(F(" videos:")); Serial.print((recv[11] << 8) + recv[12]);
-    {
-      // maximum file size (4GB if FAT32, 0 means infinity if exFAT)
-      // if one video file exceeds the limit then GoPro will divide it into smaller files automatically
-      char tmp[13];
-      sprintf(tmp, " %02xGB %02x%02x%02x", recv[13], recv[14], recv[15], recv[16]);
-      Serial.print(tmp);
-    }
-    Serial.println();
     break;
   case SET_BACPAC_HEARTBEAT: // response to GET_CAMERA_SETTING
     // to exit 3D mode, emulate detach bacpac
@@ -370,25 +292,6 @@ void bacpacCommand()
   }
 }
 
-void checkBacpacCommands()
-{
-  if (recvq) {
-    _printInput();
-    if (!(recv[0] & 0x80)) {// information bytes
-      switch (recv[0]) {
-        // Usual packet length (recv[0]) is 0 or 1.
-        case 0x27: 
-          break;
-        default:
-          // do nothing
-          break;
-      }
-    } else { 
-      bacpacCommand();
-    }
-    recvq = false;
-  }
-}
 
 // Switches:
 
@@ -461,13 +364,10 @@ void checkPower() {
   }
 }
 
-
 boolean lastHerobusState = LOW;  // Will be HIGH when camera attached.
 
 void setup() 
 {
-  Serial.begin(57600);
-  
   pinMode(SWITCH0_PIN, INPUT_PULLUP);
   pinMode(SWITCH1_PIN, INPUT_PULLUP);
   pinMode(POWER_SW, INPUT_PULLUP);
@@ -475,11 +375,9 @@ void setup()
   ledOff();
   pinMode(BPRDY, OUTPUT); digitalWrite(BPRDY, LOW);    // Show camera MewPro attach. 
   pinMode(TRIG, OUTPUT); digitalWrite(TRIG, LOW);
-
-  // don't forget to switch pin configurations to INPUT.
-  pinMode(I2CINT, INPUT);  // Teensy: default disabled
-  pinMode(HBUSRDY, INPUT); // default: analog input
-  pinMode(PWRBTN, INPUT);  // default: analog input
+  pinMode(I2CINT, INPUT);
+  pinMode(HBUSRDY, INPUT);
+  pinMode(PWRBTN, INPUT);
   if (isMaster()) {
     roleChange();
   }
@@ -502,7 +400,10 @@ void loop()
   }
 
   checkPower();
-  checkBacpacCommands();
+  if (recvq) {
+      bacpacCommand();
+      recvq = false;
+  }
   checkCameraCommands();
   checkSwitch();
 }
