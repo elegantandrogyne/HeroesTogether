@@ -450,14 +450,14 @@ void checkSwitch()
   lastButtonState = reading;
 }
 
+static int isOn = 0;
 void checkPower() {
-  boolean lastState = 0;
-  if ((digitalRead(POWER_SW)) && (!lastState)) {
+  if ((digitalRead(POWER_SW) == 0) && (isOn == 0)) {
     powerOn();
-    lastState = 1;
-  } else if ((!digitalRead(POWER_SW)) && (lastState)) {
+    isOn = 1;
+  } else if ((digitalRead(POWER_SW) != 0) && (isOn == 1)) {
     powerOff();
-    lastState = 0;
+    isOn = 0;
   }
 }
 
