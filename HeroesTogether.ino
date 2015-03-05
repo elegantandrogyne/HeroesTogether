@@ -223,7 +223,7 @@ void checkCameraCommands()
 }
 
 // Bacpac Commands:
-static int cameraMode = 1;     // default: photo
+static int cameraMode = digitalRead(MODE_SW) ;     // depends on the mode switch
 boolean tDone = false;
 
 // what does this mean? i have no idea...
@@ -246,10 +246,10 @@ void bacpacCommand()
       digitalWrite(TRIG, LOW);
       break;
     case 1: // CAPTURE_START
-      if (cameraMode == 1) {
+    /*  if (cameraMode == 1) {
         delay(500);
         ledOff();
-      }
+      }*/
       break;
     case 2: // CAPTURE_INTERMEDIATE (PES only)
     case 3: // PES interim capture complete
@@ -299,12 +299,14 @@ void checkShutterRelease()
   if (reading != lastButtonState) {
     lastDebounceTime = millis();
   }
-  if (millis() - lastDebounceTime > 100) {
+  if (millis() - lastDebounceTime > 50) {
     if (reading != buttonState) {
-      if (reading != 0) {
-        startRecording();
-      } else {
+      // In video mode, press button again to turn off recording...
+      if ((reading == 0) && (cameraMode == 0) && (ledState == 1)) {
         stopRecording();
+      // ...otherwise, take a photo / start recording:
+      } else if (reading == 0) {
+        startRecording();
       }
       buttonState = reading;
     }
@@ -312,26 +314,34 @@ void checkShutterRelease()
   lastButtonState = reading;
 }
 
-static int isOn = 0;
+static boolean isOn = false;
 // POWER_SW line: short to GND for ON and leave floating for OFF
 void checkPower() {
-  if ((digitalRead(POWER_SW) == 0) && (isOn == 0)) {
+  if ((digitalRead(POWER_SW) == 0) && (!isOn)) {
     powerOn();
-    isOn = 1;
-  } else if ((digitalRead(POWER_SW) != 0) && (isOn == 1)) {
+    isOn = true;
+  } else if ((digitalRead(POWER_SW) != 0) && (isOn)) {
     powerOff();
-    isOn = 0;
+    isOn = false;
   }
 }
+
+void turnLedOffInPhotoMode() {
+  if ((cameraMode == 1) && (ledState)) {
+    delay(500);
+    ledOff();
+  }
+}
+    
 
 
 // default - photo; MODE_SW line: short to GND for video and leave floating for photo
 void checkCameraMode() {
-  if ((digitalRead(MODE_SW) == 1) && (cameraMode != 1)) {           // set to photo mode
+  if ((digitalRead(MODE_SW) == 1) && (cameraMode == 0)) {           // set to photo mode
     queueIn("CM1");
     queueIn("DM1");
     cameraMode = 1;
-  } else if ((digitalRead(MODE_SW) == 0) && (cameraMode != 0)) {    // set to video mode
+  } else if ((digitalRead(MODE_SW) == 0) && (cameraMode == 1)) {    // set to video mode
     queueIn("CM0");
     queueIn("DM0");
     cameraMode = 0;
@@ -379,5 +389,6 @@ void loop()
   }
   checkCameraCommands();
   checkShutterRelease();
+  turnLedOffInPhotoMode();
 }
 
