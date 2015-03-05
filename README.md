@@ -4,7 +4,7 @@ Forked from MewPro, developped for Lentimax: multiple-GoPro array for 3D photogr
 Arduino BacPac™ for GoPro Hero 3+ Black: GoPro can be controlled by Arduino Pro Mini attached on Herobus.
 
 Resources:
-* Introduction to MewPro: [http://mewpro.cc/?p=226]
+* Introduction to MewPro, the original project: [http://mewpro.cc/?p=226]
 * Schematic Drawing of MewPro: [http://mewpro.cc/?p=204]
 * List of GoPro Serial Commands: [http://mewpro.cc/2014/10/14/list-of-i%C2%B2c-commands/]
 * Herobus Pinout of GoPro Hero 3+ Black: [http://mewpro.cc/?p=207]
@@ -23,8 +23,8 @@ HeroesTogether is a vastly simplified fork of MewPro. Most functionality has bee
 * video motion detect
 * serial port communication.
 
-What is left are routines for communicating via Herobus, master/slave mode setting, camera on, shutter release with a switch (w/ debouncing).
-Added a new functionality:  remote power on/off on switch.
+What is left are routines for communicating via Herobus, slave mode setting, camera on, shutter release with a switch (w/ debouncing).
+Added a new functionality:  remote power on/off on a switch, and video/photo mode setting with camera reboot.
 
 ------
 
@@ -35,9 +35,11 @@ Use Arduino IDE for compiling and uploading the source to your Arduino Pro Mini 
 
 ###Controlling it!
 HeroesTogether uses two lines connected via 1N4148 diodes for separation:
-* 3 - power on/off,
-* 5 - shutter release or movie start-stop.
+* 3 - power on (switch on) / power off (switch off). Connect on-off SPST switch here.
+* 5 - shutter release or movie start-stop (connect momentary NO SPST here),
+* 7 - camera mode setting: video (switch on) / photo (switch off). Connect on-off SPST here too.
 
-Basically, you connect all your HeroesTogether units in parallel, and you connect two switches for shorting these lines to GND.
+Basically, you connect all your HeroesTogether units in parallel, and you connect the switches for shorting these lines to GND.
+You can also make a controller for synchronized timelapse etc.
 
 Have fun!
