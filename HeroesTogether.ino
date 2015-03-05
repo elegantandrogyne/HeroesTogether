@@ -33,6 +33,9 @@ const int LED_OUT          = 13; // Arduino onboard LED; HIGH (= ON) while recor
 const int HBUSRDY          = A0; // Herobus Ready line
 const int PWRBTN           = A1; // Short to GND for power ON
 
+// Default camera mode: photo
+static int cameraMode = 1;
+
 // Queue section:
 
 byte queue[HT_BUFFER_LENGTH];
@@ -121,31 +124,6 @@ void resetI2C()
   emptyQueue();
 }
 
-// SET_CAMERA_3D_SYNCHRONIZE START_RECORD
-void startRecording()
-{
-  queueIn("SY1");
-}
-
-// SET_CAMERA_3D_SYNCHRONIZE STOP_RECORD
-void stopRecording()
-{
-  queueIn("SY0");
-}
-
-// Camera power On
-void powerOn()
-{
-  pinMode(PWRBTN, OUTPUT);
-  digitalWrite(PWRBTN, LOW);
-  delay(1000);
-  pinMode(PWRBTN, INPUT);
-}
-
-void powerOff() {
-  queueIn("PW0");
-}
-
 void setSlave()
 {
   byte d, id;
@@ -185,45 +163,7 @@ void setSlave()
   }
 }
 
-void checkCameraCommands()
-{
-  while (queueb != queuee)  {
-    static boolean shiftable;
-    byte c = myRead();
-    switch (c) {
-      case '\n':
-        if (bufp != 1) {
-          buf[0] = bufp - 1;
-          bufp = 1;
-          SendBufToCamera();
-        }
-        return;
-
-      default:
-        if (bufp >= 3 && isxdigit(c)) {
-          c -= '0';
-          if (c >= 10) {
-            c = (c & 0x0f) + 9;
-          }    
-        }
-        if (bufp < 4) {
-          shiftable = true;
-          buf[bufp++] = c;
-        } else {
-          if (shiftable) {
-            buf[bufp-1] = (buf[bufp-1] << 4) + c;
-          } else {
-            buf[bufp++] = c;
-          }
-          shiftable = !shiftable;      
-        }
-        break;
-    }
-  }
-}
-
 // Bacpac Commands:
-static int cameraMode = digitalRead(MODE_SW) ;     // depends on the mode switch
 boolean tDone = false;
 
 // what does this mean? i have no idea...
@@ -246,10 +186,6 @@ void bacpacCommand()
       digitalWrite(TRIG, LOW);
       break;
     case 1: // CAPTURE_START
-    /*  if (cameraMode == 1) {
-        delay(500);
-        ledOff();
-      }*/
       break;
     case 2: // CAPTURE_INTERMEDIATE (PES only)
     case 3: // PES interim capture complete
@@ -286,6 +222,136 @@ void bacpacCommand()
 }
 
 
+void checkCameraCommands()
+{
+  while (queueb != queuee)  {
+    static boolean shiftable;
+    byte c = myRead();
+    switch (c) {
+      case '\n':
+        if (bufp != 1) {
+          buf[0] = bufp - 1;
+          bufp = 1;
+          SendBufToCamera();
+        }
+        return;
+
+      default:
+        if (bufp >= 3 && isxdigit(c)) {
+          c -= '0';
+          if (c >= 10) {
+            c = (c & 0x0f) + 9;
+          }    
+        }
+        if (bufp < 4) {
+          shiftable = true;
+          buf[bufp++] = c;
+        } else {
+          if (shiftable) {
+            buf[bufp-1] = (buf[bufp-1] << 4) + c;
+          } else {
+            buf[bufp++] = c;
+          }
+          shiftable = !shiftable;      
+        }
+        break;
+    }
+  }
+    if (recvq) {
+    bacpacCommand();
+    recvq = false;
+  }
+}
+
+
+
+// SET_CAMERA_3D_SYNCHRONIZE START_RECORD
+void startRecording()
+{
+  queueIn("SY1");
+}
+
+// SET_CAMERA_3D_SYNCHRONIZE STOP_RECORD
+void stopRecording()
+{
+  queueIn("SY0");
+}
+
+
+static boolean isOn = false;
+
+
+// Camera power On
+void powerOn()
+{
+  pinMode(PWRBTN, OUTPUT);
+  digitalWrite(PWRBTN, LOW);
+  delay(1000);
+  pinMode(PWRBTN, INPUT);
+}
+
+void powerOff() {
+  queueIn("PW0");
+}
+
+void reboot() {
+  static unsigned long time = 0;
+  ledOn();
+  // Set the current camera mode to turn on next...
+  switch (cameraMode) {
+    case 0:
+      queueIn("DM0");
+      break;
+    case 1:
+      queueIn("DM1");
+      break;
+    default:
+      break;
+  }
+  checkPower();
+  if (isOn) {
+    time = millis();
+    while (millis() < (time + 100)) {
+      checkCameraCommands();
+      }
+    powerOff();
+    time = millis();
+    while (millis() < (time + 2000)) {
+      checkCameraCommands();
+      }
+    powerOn();
+  }
+  ledOff();
+}
+
+
+// POWER_SW line: short to GND for ON and leave floating for OFF
+
+void checkPower() {
+  static int lastButtonState = 0;
+  static int buttonState;
+  static unsigned long lastDebounceTime = 0;
+  
+  int pwrState = digitalRead(POWER_SW);
+  if (pwrState != lastButtonState) {
+    lastDebounceTime = millis();
+  }
+  if (millis() - lastDebounceTime > 100) {
+    if (pwrState != buttonState) {
+      if ((pwrState == 0) && (!isOn)) {
+      powerOn();
+      isOn = true;
+    } else if ((pwrState != 0) && (isOn)) {
+      powerOff();
+      isOn = false;
+    }
+    buttonState = pwrState;
+    }
+  }
+  lastButtonState = pwrState;
+}
+
+
 // Shutter release routine:
 
 void checkShutterRelease()
@@ -295,35 +361,23 @@ void checkShutterRelease()
   static int buttonState;
 
   // read switch with debounce
-  int reading = (digitalRead(RELEASE_SW));
-  if (reading != lastButtonState) {
+  int shState = (digitalRead(RELEASE_SW));
+  if (shState != lastButtonState) {
     lastDebounceTime = millis();
   }
   if (millis() - lastDebounceTime > 50) {
-    if (reading != buttonState) {
-      // In video mode, press button again to turn off recording...
-      if ((reading == 0) && (cameraMode == 0) && (ledState == 1)) {
+    if (shState != buttonState) {
+      // In video mode, press button when the LED is on to stop recording...
+      if ((shState == 0) && (cameraMode == 0) && (ledState == 1)) {
         stopRecording();
       // ...otherwise, take a photo / start recording:
-      } else if (reading == 0) {
+      } else if (shState == 0) {
         startRecording();
       }
-      buttonState = reading;
+      buttonState = shState;
     }
   }
-  lastButtonState = reading;
-}
-
-static boolean isOn = false;
-// POWER_SW line: short to GND for ON and leave floating for OFF
-void checkPower() {
-  if ((digitalRead(POWER_SW) == 0) && (!isOn)) {
-    powerOn();
-    isOn = true;
-  } else if ((digitalRead(POWER_SW) != 0) && (isOn)) {
-    powerOff();
-    isOn = false;
-  }
+  lastButtonState = shState;
 }
 
 void turnLedOffInPhotoMode() {
@@ -332,20 +386,32 @@ void turnLedOffInPhotoMode() {
     ledOff();
   }
 }
-    
 
 
 // default - photo; MODE_SW line: short to GND for video and leave floating for photo
 void checkCameraMode() {
-  if ((digitalRead(MODE_SW) == 1) && (cameraMode == 0)) {           // set to photo mode
-    queueIn("CM1");
-    queueIn("DM1");
-    cameraMode = 1;
-  } else if ((digitalRead(MODE_SW) == 0) && (cameraMode == 1)) {    // set to video mode
-    queueIn("CM0");
-    queueIn("DM0");
-    cameraMode = 0;
+  static int lastButtonState = 0;
+  static int buttonState;
+  static unsigned long lastDebounceTime = 0;
+  
+  int cmState = digitalRead(MODE_SW);
+  if (cmState != lastButtonState) {
+    lastDebounceTime = millis();
   }
+  if (millis() - lastDebounceTime > 100) {
+    if (cmState != buttonState) {
+      if ((cmState == 1) && (cameraMode == 0)) {           // set to photo mode
+        cameraMode = 1;
+        reboot();
+
+      } else if ((cmState == 0) && (cameraMode == 1)) {    // set to video mode
+        cameraMode = 0;
+        reboot();
+      }
+    buttonState = cmState;
+    }
+  }
+  lastButtonState = cmState;
 }
 
 boolean lastHerobusState = LOW;  // Will be HIGH when camera attached.
@@ -361,6 +427,7 @@ void setup()
   pinMode(I2CINT,     INPUT);
   pinMode(HBUSRDY,    INPUT);
   pinMode(PWRBTN,     INPUT);
+  cameraMode = digitalRead(MODE_SW) ;     // depends on the mode switch
   ledOff();
   setSlave();
 }
@@ -381,13 +448,9 @@ void loop()
     }
   }
 
+  checkCameraCommands();
   checkPower();
   checkCameraMode();
-  if (recvq) {
-      bacpacCommand();
-      recvq = false;
-  }
-  checkCameraCommands();
   checkShutterRelease();
   turnLedOffInPhotoMode();
 }
