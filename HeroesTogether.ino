@@ -19,16 +19,11 @@ const short int SET_BACPAC_3D_SYNC_READY    = ('S' << 8) + 'R';
 const short int SET_BACPAC_SLAVE_SETTINGS   = ('X' << 8) + 'S';
 const short int SET_BACPAC_HEARTBEAT        = ('H' << 8) + 'B';
 const short int SET_BACPAC_POWER_DOWN       = ('P' << 8) + 'W';
-const short int SET_BACPAC_SHUTTER_ACTION   = ('S' << 8) + 'H';
-
-// Current camera mode is actually found in a string the camera sends: 
-const short int SET_BACPAC_MODE             = ('C' << 8) + 'M';
-const short int TD_MODE = 0x09;
 
 // Pin definitions
 const int LINE_1           = 3;  // Line 1 for power / mode switching
 const int LINE_2           = 5;  // Line 2 for power / mode switching
-const int RELEASE_SW       = 7;  // Software debounced; ON - video, OFF - photo
+const int RELEASE_SW       = 7;  // Shutter release button
 const int I2CINT           = 10; // (SS)
 const int TRIG             = 11; // (MOSI)
 const int BPRDY            = 12; // (MISO) Pulled up by camera
@@ -36,15 +31,126 @@ const int LED_OUT          = 13; // Arduino onboard LED; HIGH (= ON) while recor
 const int HBUSRDY          = A0; // Herobus Ready line
 const int PWRBTN           = A1; // Short to GND for power ON
 
-// For reading the camera settings:
-const int TD_BUFFER_SIZE = 0x29;
-byte td[TD_BUFFER_SIZE];
-const short int tdtable[] = {SET_BACPAC_MODE, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+// Default camera mode: menu
+static int cameraMode = 7;
+static int lastCameraMode = 7;
+static long cameraModeLastCheckTime = 0;
+static int combinedMode = 0;
+static int lastCombinedMode = 7;
+static int lastLinesState = 7;
+static long lastDebounceTime = 0;
+
+// Powered on flag
+static bool isOn = false;
+
+// Recording flag
+static bool isRecording = false;
+
+// Busy flag
+static bool cameraBusy = true;
+
+// td sent
 boolean tdDone = false;
 
-// Default camera mode: photo
-static int cameraMode = 1;
-static int newCameraMode = 1;
+// LED control:
+
+boolean ledState;
+void ledOff()
+{
+  digitalWrite(LED_OUT, LOW);
+  ledState = false;
+}
+
+void ledOn()
+{
+  digitalWrite(LED_OUT, HIGH);
+  ledState = true;
+}
+
+void ledToggle()                         // if it was on - turn off, and vice versa
+{
+  digitalWrite(LED_OUT, !ledState);
+  ledState = !ledState;
+}
+
+void blink(int times) {                  // blinking for e.g. signalizing the camera mode
+  for (int i=0; i<(times * 2); i++) {          // or for other diagnostic output during development
+    ledToggle();
+    delay(100);
+  }
+}
+
+void turnLedOffInPhotoMode() {                 // LED will light up on shutter release, but will not
+  if ((cameraMode == 1) && (cameraBusy)) {     // turn off automatically - this problem is solved here
+    delay(500);
+    ledOff();
+    cameraBusy = false;
+  }
+}
+
+// Power control:
+
+void powerOn()
+{
+  pinMode(PWRBTN, OUTPUT);                 // short the powerbutton (Herobus 12) to the ground
+  digitalWrite(PWRBTN, LOW);
+  delay(10);
+  digitalWrite(PWRBTN, HIGH);
+  pinMode(PWRBTN, INPUT);                  // release the powerbutton line
+  isOn = true;                             // set the flag in the software
+}
+
+void powerOff() {
+  static unsigned long time = millis();    // wait until camera processes any previous commands
+    while (millis() < (time + 100)) {
+      checkBacpacAndCameraCommands();
+      }
+  queueIn("PW0");                          // send a command to power the camera down
+  time = millis();
+  while (millis() < (time + 2000)) {       // wait again - poweroff takes quite a bit
+    checkBacpacAndCameraCommands();
+    }
+  isOn = false;                            // set the flag in the software
+}
+
+void reboot() {
+  ledOn();                                 // LED should light up for the process
+  cameraBusy = true;                       // don't allow shutter release or mode change
+  static unsigned long time = 0;
+  if ((cameraMode != 7) && (isOn)) {       // change from one mode to another when on
+    setCameraMode();
+    powerOff();
+    powerOn();
+  } else if ((cameraMode != 7) && (!isOn)) {  // switching on - needs rebooting too!
+    powerOn();                                // camera will start in a wrong mode...
+    delay(5000);
+    time = millis();
+    while (millis() < (time + 100)) {
+      resetHerobus();
+      checkBacpacAndCameraCommands();
+    }
+    setCameraMode();                                 // set the new camera mode
+    powerOff();                                      // reboot
+    powerOn();
+  }  else if ((cameraMode == 7) && (isOn)) {         // switching the camera off
+    setCameraMode();
+    powerOff();
+  }
+  cameraBusy = false;
+  ledOff();                                 // after finishing turn the LED off
+}
+
+void setCameraMode() {                      // 0: video, 1: photo, 2: burst, 7: menu
+  char cmd[3];
+  static unsigned long time = 0;
+  sprintf(cmd, "DM%d", cameraMode);
+  blink(cameraMode);                        // indicate the new camera mode on switching
+  queueIn(cmd);
+  time = millis();
+  while (millis() < (time + 100)) {
+      checkBacpacAndCameraCommands();
+  }
+}
 
 // Queue section:
 
@@ -76,21 +182,6 @@ void queueIn(const char *p)
   queuee = (queuee + i + 1) % HT_BUFFER_LENGTH;
 }
 
-// LED control:
-
-boolean ledState;
-void ledOff()
-{
-  digitalWrite(LED_OUT, LOW);
-  ledState = false;
-}
-
-void ledOn()
-{
-  digitalWrite(LED_OUT, HIGH);
-  ledState = true;
-}
-
 // I2C commands:
 
 byte buf[HT_BUFFER_LENGTH], recv[HT_BUFFER_LENGTH];
@@ -109,13 +200,6 @@ void receiveHandler(int numBytes)
 
 void requestHandler()
 {
-  if (strncmp((char *)buf, "\003SY", 3) == 0) {
-    if (buf[3] == 1) {
-      ledOn();
-    } else {
-      ledOff();
-    }
-  }
   WIRE.write(buf, (int) buf[0] + 1);
 }
 
@@ -130,23 +214,13 @@ void resetI2C()
   WIRE.begin(SMARTY);
   WIRE.onReceive(receiveHandler);
   WIRE.onRequest(requestHandler);
-
   emptyQueue();
 }
 
 void setSlave()
 {
   byte d, id;
-  WIRE.begin();
-  WIRE.beginTransmission(I2CEEPROM);
-  WIRE.write((byte) 0);
-  WIRE.endTransmission(I2C_NOSTOP);
-  WIRE.requestFrom(I2CEEPROM, 1);
-  if (WIRE.available()) {
-    id = WIRE.read();
-  }
   resetI2C();
-  
   // emulate detouching bacpac by releasing BPRDY line
   pinMode(BPRDY, INPUT);
   delay(1000);
@@ -159,7 +233,7 @@ void setSlave()
         case 0: d = ID_SLAVE; break; // major (MOD1): 5 for slave
         case 1: d = 5; break;  // minor (MOD2) need to be greater than 4
         case 2: d = 0; break;
-        case 3: d = 0; break;
+        case 3: d = 0x0b; break;
       }
       WIRE.write(d);
     }
@@ -173,47 +247,40 @@ void setSlave()
 
 // Bacpac Commands:
 
-
 // what does this mean? i have no idea...
 unsigned char validationString[19] = { 18, 0, 0, 3, 1, 0, 1, 0x3f, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0 };
 
-void bacpacCommand()
-{
+void checkBacpacAndCameraCommands() {
+  // check BacPac commands
+  if (recvq) {
   switch ((recv[1] << 8) + recv[2]) {
   case GET_BACPAC_PROTOCOL_VERSION:
-    ledOff();
     memcpy(buf, validationString, sizeof validationString);
     SendBufToCamera();
     queueIn("XS1");
     break;
   case SET_BACPAC_3D_SYNC_READY:
     switch (recv[3]) {
-    case 0: // CAPTURE_STOP
+    case 0:
       digitalWrite(TRIG, HIGH);
       delay(1);
       digitalWrite(TRIG, LOW);
       break;
-    case 1: // CAPTURE_START
+    case 1:                      // start recording or take photo
+      ledOn();
+      cameraBusy = true;
       break;
-    case 2: // CAPTURE_INTERMEDIATE (PES only)
-    case 3: // PES interim capture complete
+    default:                     // burst capture complete
       ledOff();
-      break;
-    default:
+      cameraBusy = false;
       break;
     }
     break;
   case SET_BACPAC_SLAVE_SETTINGS:
     queueIn("XS0");
     break;
-  case SET_BACPAC_SHUTTER_ACTION: // SH
-    buf[0] = 3; buf[1] = 'S'; buf[2] = 'Y'; buf[3] = recv[3];
-    SendBufToCamera();
-    return;    
-    break;
-  case SET_BACPAC_HEARTBEAT: // response to GET_CAMERA_SETTING
-    // to exit 3D mode, emulate detach bacpac
-    if (!tdDone) {
+  case SET_BACPAC_HEARTBEAT:     // response to GET_CAMERA_SETTING
+    if (!tdDone) {               // to exit 3D mode, emulate detach bacpac
     pinMode(BPRDY, INPUT);
     delay(1000);
     pinMode(BPRDY, OUTPUT);
@@ -221,57 +288,11 @@ void bacpacCommand()
     tdDone = true;
   }
     break;
-  case SET_BACPAC_POWER_DOWN: // PW
+  case SET_BACPAC_POWER_DOWN:    // PW0
   tdDone = false;
-  return;
   default:
     break;
   }
-}
-
-
-void checkBacpacAndCameraCommands() {
-  // check BacPac commands
-  if (recvq) {
-    if (!(recv[0] & 0x80)) {
-
-      if (recv[0] == 0x25) {
-        if (!tdDone) {
-          queueIn("td");
-        }
-        } else if (recv[0] == 0x27) {
-           memcpy((char *)td+1, recv, TD_BUFFER_SIZE-1);
-           td[0] = TD_BUFFER_SIZE-1; td[1] = 'T'; td[2] = 'D';
-        
-            //a little debug function
-            ledOn();
-            delay(200);
-            ledOff();
-            delay(200);
-            ledOn();
-            delay(200);
-            ledOff();
-            delay(200);
-            //end debug function
-          cameraMode = SET_BACPAC_MODE;
-          switch (cameraMode) {
-            case 0:
-              ledOn();
-              delay(5000);
-              ledOff();
-              break;
-            case 1:
-              ledOn();
-              delay(1000);
-              ledOff();
-              break;
-            default:
-              break;
-          }
-      }
-    } else {
-    bacpacCommand();
-    }
     recvq = false;
   }
   
@@ -311,77 +332,21 @@ void checkBacpacAndCameraCommands() {
   }
 }
 
-
-
 // SET_CAMERA_3D_SYNCHRONIZE START_RECORD
 void startRecording()
 {
   queueIn("SY1");
+  if (cameraMode == 0) {                  // flag recording status in video mode
+  isRecording = true;
+  }
 }
 
 // SET_CAMERA_3D_SYNCHRONIZE STOP_RECORD
 void stopRecording()
 {
   queueIn("SY0");
-}
-
-
-static boolean isOn = false;
-
-
-// Camera power On
-void powerOn()
-{
-  pinMode(PWRBTN, OUTPUT);
-  digitalWrite(PWRBTN, LOW);
-  delay(1000);
-  pinMode(PWRBTN, INPUT);
-  isOn = true;
-}
-
-void powerOff() {
-  queueIn("PW0");
-  isOn = false;
-}
-
-void reboot() {
-  static unsigned long time = 0;
-  ledOn();
-  // Set the current camera mode to turn on next...
-  switch (cameraMode) {
-    case 1:
-      queueIn("DM1"); //photo
-      break;
-    case 2:
-      queueIn("DM2"); //burst
-      break;
-    case 3:
-      queueIn("DM0"); //video
-      break;
-    case 4:
-      queueIn("DM4");
-      break;
-    case 5:
-      queueIn("DM5");
-      break;
-    case 7:
-      queueIn("DM7");
-      break;
-    default:
-      break;
-  }
-  if (isOn) {
-    time = millis();
-    while (millis() < (time + 100)) {
-      checkBacpacAndCameraCommands();
-      }
-    powerOff();
-    time = millis();
-    while (millis() < (time + 2000)) {
-      checkBacpacAndCameraCommands();
-      }
-    powerOn();
-  }
+  isRecording = false;                     // set the flag to off and put the LED out
+  cameraBusy = false;
   ledOff();
 }
 
@@ -390,7 +355,7 @@ void reboot() {
 void checkShutterRelease()
 {
   static unsigned long lastDebounceTime = 0;
-  static int lastButtonState = 0;
+  static int lastButtonState = 1;                   // we use negative logic here
   static int buttonState;
 
   // read switch with debounce
@@ -398,13 +363,12 @@ void checkShutterRelease()
   if (shState != lastButtonState) {
     lastDebounceTime = millis();
   }
-  if (millis() - lastDebounceTime > 50) {
-    if (shState != buttonState) {
-      // In video mode, press button when the LED is on to stop recording...
-      if ((shState == 0) && (cameraMode == 0) && (ledState == 1)) {
+  if (millis() - lastDebounceTime > 5) {            // 5ms debounce time should be safe enough 
+    if (shState != buttonState) {                   // in video mode, press button again
+      if ((shState == 0) && (cameraMode == 0)       // to stop recording...
+          && (isRecording)) {
         stopRecording();
-      // ...otherwise, take a photo / start recording:
-      } else if (shState == 0) {
+      } else if (shState == 0) {                    // ...otherwise, take a photo / start recording:
         startRecording();
       }
       buttonState = shState;
@@ -413,88 +377,43 @@ void checkShutterRelease()
   lastButtonState = shState;
 }
 
-void turnLedOffInPhotoMode() {
-  if ((cameraMode == 1) && (ledState)) {
-    delay(500);
-    ledOff();
-  }
-}
-
-// default - photo; MODE_SW line: short to GND for video and leave floating for photo
-int checkLine1() {
-  static int lastButtonState = 0;
-  static unsigned long lastDebounceTime = 0;
-  
-  int line1State = digitalRead(LINE_1);
-  if (line1State != lastButtonState) {
-    lastDebounceTime = millis();
-  }
-  if (millis() - lastDebounceTime > 100) {
-  lastButtonState = line1State;
-  return lastButtonState;
-  }
-}
-
-int checkLine2() {
-  static int lastButtonState = 0;
-  static unsigned long lastDebounceTime = 0;
-  
-  int line2State = digitalRead(LINE_2);
-  if (line2State != lastButtonState) {
-    lastDebounceTime = millis();
-  }
-  if (millis() - lastDebounceTime > 100) {
-  lastButtonState = line2State;
-  return lastButtonState;
-  }
-}
-
-void checkCameraMode(int line1State, int line2State){
-  if (line1State == true && line2State == true){
-    newCameraMode = 3;  //video
-    reboot();
-  } else if (line2State == true) {
-    newCameraMode = 2;  // burst
-    reboot();
-  } else if (line1State == true) {
-    newCameraMode = 1;  // photo
-    reboot();
-  } else {
-    newCameraMode = 0;  // off
-    if (isOn) {
-    isOn = false;
+void checkLines() {                  // polls LINE_1 and LINE_2 for status
+    int linesReading = (digitalRead(LINE_1) << 1) + digitalRead(LINE_2);
+    if (linesReading != lastLinesState) {
+      lastDebounceTime = millis();
+    }
+  if ((millis() - lastDebounceTime) > 50) {
+    if (linesReading != combinedMode) {
+      combinedMode = linesReading;
     }
   }
-  if (newCameraMode != cameraMode) {
-    cameraMode = newCameraMode;
-    reboot();
+  lastCombinedMode = linesReading;
+  lastLinesState = linesReading;
+}
+
+void checkCameraMode(){                                   // This uses a negative logic...
+  if (combinedMode == 3) {
+    combinedMode = 7;
   }
+  if (combinedMode != lastCameraMode) {
+    cameraModeLastCheckTime = millis();
+  }
+  if ((millis() - cameraModeLastCheckTime) > 1000) {      // allow some time to change
+    if (cameraMode != combinedMode) {
+      cameraMode = combinedMode;
+      reboot();                                           // mode changed? then reboot
+    }
+  }
+  lastCameraMode = combinedMode;
 }
 
 boolean lastHerobusState = LOW;  // Will be HIGH when camera attached.
-
-void setup() 
-{
-  setSlave();
-  pinMode(LINE_1,     INPUT_PULLUP);
-  pinMode(LINE_2,     INPUT_PULLUP);
-  pinMode(RELEASE_SW, INPUT_PULLUP);
-  pinMode(LED_OUT,    OUTPUT);
-  pinMode(BPRDY,      OUTPUT); digitalWrite(BPRDY, LOW);    // Show camera MewPro attach. 
-  pinMode(TRIG,       OUTPUT); digitalWrite(TRIG, LOW);
-  pinMode(I2CINT,     INPUT);
-  pinMode(HBUSRDY,    INPUT);
-  pinMode(PWRBTN,     INPUT);
-  checkCameraMode(checkLine1(), checkLine2()) ;     // depends on the mode switch
-  ledOff();
-}
-
-void loop() 
-{
+void resetHerobus() {
   // Attach or detach bacpac
   if (digitalRead(HBUSRDY) == HIGH) {
     if (lastHerobusState != HIGH) {
-      pinMode(I2CINT, OUTPUT); digitalWrite(I2CINT, HIGH);
+      pinMode(I2CINT, OUTPUT);
+      digitalWrite(I2CINT, HIGH);
       lastHerobusState = HIGH;
       resetI2C();
     }
@@ -504,10 +423,32 @@ void loop()
       lastHerobusState = LOW;
     }
   }
+}
 
+void setup() {
+  //setSlave();
+  pinMode(LINE_1,     INPUT_PULLUP);
+  pinMode(LINE_2,     INPUT_PULLUP);
+  pinMode(RELEASE_SW, INPUT_PULLUP);
+  pinMode(LED_OUT,    OUTPUT);
+  pinMode(I2CINT,     INPUT);
+  pinMode(HBUSRDY,    INPUT);
+  pinMode(PWRBTN,     INPUT);
+  pinMode(BPRDY,      OUTPUT); digitalWrite(BPRDY, LOW);    // Show camera MewPro attach. 
+  pinMode(TRIG,       OUTPUT); digitalWrite(TRIG, LOW);
+  cameraBusy = false;
+}
+
+void loop() {
+  resetHerobus();
+  checkLines();
+  if ((!cameraBusy) || isRecording) {   // allow shutter release only if camera is not busy
+  checkShutterRelease();                // or when it's recording (in video mode)
+}
+  if (!cameraBusy) {                    // lock camera mode change as long as it's busy
+  checkCameraMode();
+}
   checkBacpacAndCameraCommands();
-  checkCameraMode(checkLine1(), checkLine2());
-  checkShutterRelease();
   turnLedOffInPhotoMode();
 }
 
