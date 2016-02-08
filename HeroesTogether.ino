@@ -377,8 +377,20 @@ void checkShutterRelease()
   lastButtonState = shState;
 }
 
-void checkLines() {                  // polls LINE_1 and LINE_2 for status
-    int linesReading = (digitalRead(LINE_1) << 1) + digitalRead(LINE_2);
+int readLines() {                                       // checks the status on lines
+  return (digitalRead(LINE_1) << 1) + digitalRead(LINE_2);
+}
+
+void setInitialMode() {
+  int cameraMode = readLines();
+  if (cameraMode == 3) {                                // set the "menu" mode for off
+    cameraMode = 7;
+  }
+  reboot();
+}
+
+void checkLines() {
+    int linesReading = readLines();
     if (linesReading != lastLinesState) {
       lastDebounceTime = millis();
     }
@@ -434,9 +446,15 @@ void setup() {
   pinMode(I2CINT,     INPUT);
   pinMode(HBUSRDY,    INPUT);
   pinMode(PWRBTN,     INPUT);
-  pinMode(BPRDY,      OUTPUT); digitalWrite(BPRDY, LOW);    // Show camera MewPro attach. 
+  pinMode(BPRDY,      OUTPUT); digitalWrite(BPRDY, LOW);    // show camera MewPro attach. 
   pinMode(TRIG,       OUTPUT); digitalWrite(TRIG, LOW);
-  cameraBusy = false;
+  powerOn();                                                // initial powerup
+  static long time = millis();                              // give it two seconds to turn on
+  while ((millis() - time) < 2000) {                        // idle so that commands can be processed
+  resetHerobus();                                           // and Herobus is active
+  checkBacpacAndCameraCommands();
+  }
+  reboot();                                                 // check current state and restart or power down
 }
 
 void loop() {
